@@ -1,0 +1,8 @@
+**/*.toolbox
+*.cfg
+*.old
+**/tlatools/class
+**/.DS_Store
+tlatools/.project
+tlatools/.idea
+tlatools/*.iml
