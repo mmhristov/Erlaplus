@@ -3,6 +3,7 @@ package pcal;
 import pcal.exception.PcalErlangGenException;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static pcal.PCalErlangConstants.*;
 
@@ -10,7 +11,7 @@ import static pcal.PCalErlangConstants.*;
     todo: might be a good idea to create some sub-classes of ProcessContext in order to encapsulate
      different kinds of contexts and reduce cluttering in this class.
  */
-public class ProcessContext {
+public class ErlangProcessContext {
 
     /**
      * Signifies whether the context is currently in a variable declaration scope.
@@ -33,15 +34,16 @@ public class ProcessContext {
     private static int whileNum = 0;
 
     /**
-     * A mapping of PlusCal process-local variable names to erlang variable names.
-     * This map corresponds to the process state in erlang, which includes all variable declarations.
+     * A mapping of PlusCal variable names to Erlang variable names.
+     * This map constitutes the process' state in erlang (process-local variables, constants, translator-internal variables)
+     *  and contains more information than the generated record.
      */
-    private final TreeMap<String, String> fieldNames;
+    protected final TreeMap<String, ErlangStateField> stateFieldNames;
 
     /**
      * A mapping of PlusCal temporary variables (i.e. variables that are not part of the state) to erlang variable names.
      */
-    private final TreeMap<String, String> temporaryVarNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    private TreeMap<String, String> temporaryVarNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
     /**
      * A process-local history of all generated temporary variables.
@@ -52,21 +54,25 @@ public class ProcessContext {
 
     private int recordScopeDepth = 0;
 
-    public ProcessContext(String processName, Vector fieldVarDecls) {
+    public ErlangProcessContext(String processName, Vector processLocalVarDecls) throws PcalErlangGenException {
         this.processName = createProcessName(processName);
         this.stateRecordName = PREFIX_PROCESS_STATE_NAME + processName;
         stateVarNum = 0;
         messageVarNum = 0;
         setCurrentStateVarName();
         setCurrentMessageVarNum();
+
+        // We use case-insensitive comparators since PlusCal variable names are case-insensitive!
+        this.stateFieldNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+
         /*
-          We use case-insensitive comparators since PlusCal variable names are case-insensitive!
+            Add "self" to state and fill process-local variables
          */
-        this.fieldNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        fillFieldNames(fieldVarDecls);
+        this.stateFieldNames.put("self", new ErlangStateField("ID", ErlangStateField.FieldType.INTERNAL_VAR));
+        fillProcessLocalVarNames(processLocalVarDecls);
     }
 
-    private static String createProcessName(String processName) {
+    public static String createProcessName(String processName) {
         return PREFIX_PROCESS + processName;
     }
 
@@ -76,14 +82,15 @@ public class ProcessContext {
      *  the state variable counter and the message variable counter are reset, and
      * @param context The context to be copied from.
      */
-    public ProcessContext(ProcessContext context, boolean isNewScope) {
+    public ErlangProcessContext(ErlangProcessContext context, boolean isNewScope) {
         this.processName = context.processName;
         this.stateRecordName = context.stateRecordName;
-        this.fieldNames = context.fieldNames;
+        this.stateFieldNames = context.stateFieldNames;
 
         if (!isNewScope) {
             this.stateVarNum = context.stateVarNum;
             this.messageVarNum = context.messageVarNum;
+            this.temporaryVarNames = context.temporaryVarNames;
         }
         setCurrentStateVarName();
         setCurrentMessageVarNum();
@@ -102,7 +109,7 @@ public class ProcessContext {
 
         int temporaryVarCount = temporaryVarsHistory.getOrDefault(pcalName, 0) + 1;
         String tempVarName = createTemporaryVarName(pcalName, temporaryVarCount - 1); // make name 0-based
-        if (fieldNames.containsKey(tempVarName)) {
+        if (stateFieldNames.containsKey(tempVarName)) {
             throw new PcalErlangGenException(
                     "Cannot add temporary variable because there already exists a process-local variable with name "
                             + tempVarName
@@ -120,7 +127,7 @@ public class ProcessContext {
 
     public void removeTemporaryVar(String pcalName) throws PcalErlangGenException {
         if (!temporaryVarNames.containsKey(pcalName)) {
-            throw new PcalErlangGenException("Temporary var-name has already been removed!");
+            throw new PcalErlangGenException("Temporary var name has already been removed!");
         } else {
             temporaryVarNames.remove(pcalName);
         }
@@ -136,57 +143,82 @@ public class ProcessContext {
      * @return The variable access string of the given variable name.
      */
     private String getVarAccess(String pcalVarName) {
-        return formatVarAccess(getFieldName(pcalVarName));
+        return formatVarAccess(getStateField(pcalVarName));
     }
 
     public String getFieldName(String pcalName) {
-        return fieldNames.get(pcalName);
+        return getStateField(pcalName).getName();
+    }
+    private ErlangStateField getStateField(String pcalName) {
+        return stateFieldNames.get(pcalName);
     }
 
-    protected String formatVarAccess(String varStr) {
-        if (isInVarDeclScope) {
-            return varStr;
+    protected String formatVarAccess(ErlangStateField field) {
+        if (field.getType() == ErlangStateField.FieldType.CONSTANT) {
+            return formatConstantVarAccess(field);
         }
-        return String.format(PROCESS_FIELD_ACCESS, currentStateVarName, stateRecordName, varStr);
+
+        if (isInVarDeclScope) {
+            return field.getName();
+        }
+        return String.format(PROCESS_FIELD_ACCESS, currentStateVarName, stateRecordName, field.getName());
+    }
+
+    private String formatConstantVarAccess(ErlangStateField constant) {
+        assert constant.getType() == ErlangStateField.FieldType.CONSTANT;
+        return String.format(MACRO_USAGE, constant.getName());
     }
 
     /**
-     * Gets the variable name given a PlusCal variable name. The name can either be a state variable, a record key name
-     *  or a temporary variable (i.e. a variable not part of the state record).
+     * Gets the variable name given a PlusCal variable name. The name can either be a state variable, a record key name,
+     *  a temporary variable (not part of the state record), or a constant (not part of the state record).
      * @param pcalVarName The variable name in PlusCal.
      * @return The variable name string.
      */
     public String getErlangVarStr(String pcalVarName) throws PcalErlangGenException {
-        String var;
         if (temporaryVarNames.containsKey(pcalVarName)) {
             return temporaryVarNames.get(pcalVarName);
-        } else if (fieldNames.containsKey(pcalVarName)) {
+        } else if (stateFieldNames.containsKey(pcalVarName)) {
             return getVarAccess(pcalVarName);
         } else {
             if (isInRecordScope()) {
                 /*
-                    If we don't find the identifier and we are in a record scope, then we assume it is a record key.
+                    If we don't find the identifier and are in a record scope, then we assume it is a record key.
                     Disadvantage: if a PlusCal program addresses a key, which has the same identifier as
                      a normal variable, then this function will wrongly return the variable name.
                  */
-                // todo: add PcalErlangRecordKeyVar-s in context so that they can be looked up
                 return createRecordKeyName(pcalVarName);
             } else {
-                throw new PcalErlangGenException("Encountered unknown variable " + pcalVarName);
+                /*
+                    We treat unknown variables as constants, since we assume that the user
+                    verifies the spec (or at least runs the TLA+ parser on it) before using the generated code.
+                    Hence, if the TLA+ spec is correct (i.e. has no unknown variables),
+                    then our erlang program is also correct.
+                 */
+                stateFieldNames.put(pcalVarName,
+                        new ErlangStateField(pcalVarName, ErlangStateField.FieldType.CONSTANT)
+                );
+
+                return getErlangVarStr(pcalVarName);
+
+//                throw new PcalErlangGenException("Encountered unknown variable " + pcalVarName);
             }
         }
     }
 
+    /**
+     * Get all (at this point) discovered constant names.
+     * @return a list of the constant names.
+     */
+    public Map<String, String> getConstantNamesMap() {
+        return stateFieldNames.entrySet()
+                .stream()
+                .filter(entry -> entry.getValue().getType() == ErlangStateField.FieldType.CONSTANT)
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getName()));
+    }
+
     public static String createRecordKeyName(String pcalVarName) {
         return PREFIX_RECORD_KEY + pcalVarName;
-    }
-
-    public String getProcNumberFieldAccess() {
-        return formatVarAccess(getProcNumberFieldStr());
-    }
-
-    public String getProcNumberFieldStr() {
-        return PREFIX_INTERNAL_PROC_VAR + "Num";
     }
 
     public String getCurrentStateVarName() {
@@ -229,17 +261,16 @@ public class ProcessContext {
         currentMessageVarName = String.format(MESSAGE_VAR_NAMES, messageVarNum);
     }
 
-    private void fillFieldNames(Vector fieldVarDecls) {
+    private void fillProcessLocalVarNames(Vector fieldVarDecls) throws PcalErlangGenException {
         for (Object varDeclObj : fieldVarDecls) {
             AST.VarDecl varDecl = (AST.VarDecl) varDeclObj;
             String pcalName = varDecl.var;
 
-            fieldNames.put(pcalName, createVarName(pcalName));
+            stateFieldNames.put(
+                    pcalName,
+                    new ErlangStateField(pcalName, ErlangStateField.FieldType.PROCESS_LOCAL_VARIABLE)
+            );
         }
-    }
-
-    private static String createVarName(String pcalVarName) {
-        return PREFIX_VAR + pcalVarName;
     }
 
     public String changeStateVarName(int stateVarNum) {

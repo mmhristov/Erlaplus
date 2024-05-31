@@ -65,7 +65,8 @@ package pcal;
 import pcal.exception.ParseAlgorithmException;
 import pcal.exception.TLAExprException;
 
-import java.util.Vector;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class AST implements Cloneable {
     public static AST.Uniprocess UniprocessObj;
@@ -110,7 +111,6 @@ public class AST implements Cloneable {
 
     public static AST.SendCall SendCallObj;
     public static AST.ReceiveCall ReceiveCallObj;
-    public static AST.GetAllProcsCall GetAllProcsCallObj;
     public static AST.Fail FailObj;
     public static AST.MaybeFail MaybeFailObj;
 
@@ -309,16 +309,19 @@ public class AST implements Cloneable {
         MacroCallObj = new AST.MacroCall();
         SendCallObj = new AST.SendCall();
         ReceiveCallObj = new AST.ReceiveCall();
-        GetAllProcsCallObj = new AST.GetAllProcsCall();
         FailObj = new AST.Fail();
         MaybeFailObj = new AST.MaybeFail();
     }
 
+    public static abstract class RootProcess extends AST {
+        abstract List<String> getAllProcessNames();
+        public TLAExpr defs = null;
+    }
 
-    public static class Uniprocess extends AST {
+
+    public static class Uniprocess extends RootProcess {
         public String name = "";
         public Vector decls = null; // of VarDecl
-        public TLAExpr defs = null;
         public Vector macros = null; // of Macro
         public Vector prcds = null; // of Procedure
         public Vector body = null; // of LabeledStmt
@@ -374,12 +377,15 @@ public class AST implements Cloneable {
             return result;
         }
 
+        @Override
+        public List<String> getAllProcessNames() {
+            return List.of(name);
+        }
     }
 
-    public static class Multiprocess extends AST {
+    public static class Multiprocess extends RootProcess {
         public String name = "";
         public Vector decls = null; // of VarDecl
-        public TLAExpr defs = null;
         public Vector macros = null; // of Macro
         public Vector prcds = null; // of Procedure
         public Vector procs = null; // of Process
@@ -433,6 +439,11 @@ public class AST implements Cloneable {
             return result;
         }
 
+        @SuppressWarnings("unchecked")
+        @Override
+        public List<String> getAllProcessNames() {
+            return ((Vector<Process>)procs).stream().map(e -> e.name).collect(Collectors.toList());
+        }
     }
 
     /**
@@ -1851,7 +1862,7 @@ public class AST implements Cloneable {
         public String toString() {
             return
                     Indent(lineCol()) +
-                            "[ChannelReceiver:" + NewLine() +
+                            "[Receive:" + NewLine() +
                             Indent(" channel |-> ") + getQueuesName() + "," +
                             EndIndent() + NewLine() +
                             Indent(" targetVar |-> ") + targetVarName + "," +
@@ -1958,69 +1969,6 @@ public class AST implements Cloneable {
             result.addElement(when);
             result.addElement(headAssign);
             result.addElement(tailAssign);
-
-            return result;
-        }
-
-    }
-
-    public static class GetAllProcsCall extends AST {
-
-        public String targetVarName = "";
-        public TLAExpr targetExp = new TLAExpr(new Vector());
-
-        public GetAllProcsCall() {
-        }
-
-        public String toString() {
-            return
-                    Indent(lineCol()) +
-                            "[GetAllProcsCall:" + NewLine() +
-                            Indent(" targetVar |-> ") + targetVarName + "," +
-                            EndIndent() + NewLine() +
-                            Indent(" targetExp |-> ") + targetExp + "]" +
-                            EndIndent();
-        }
-
-        @Override
-        public GetAllProcsCall deepCopy() {
-            GetAllProcsCall result = new GetAllProcsCall();
-
-            copyCommonASTFields(result);
-
-            result.targetExp = this.targetExp.cloneAndNormalize();
-            result.targetVarName = this.targetVarName;
-
-            return result;
-        }
-
-        public Vector getStmts() {
-            Vector result = new Vector();
-
-            AST.SingleAssign sass = new AST.SingleAssign();
-            sass.line = line;
-            sass.col = col;
-            sass.lhs.var = this.targetVarName;
-            sass.lhs.sub = this.targetExp.cloneAndNormalize();
-
-            TLAExpr rightExpr = new TLAExpr();
-            rightExpr.addLine();
-            rightExpr.addToken(PcalTranslate.BuiltInToken("DOMAIN "));
-            rightExpr.addToken(PcalTranslate.IdentToken(PCalErlangConstants.GLOBAL_QUEUES_NAME));
-            rightExpr.normalize();
-
-            sass.rhs = rightExpr;
-            sass.setOrigin(this.getOrigin());
-
-            AST.Assign assign = new AST.Assign();
-            assign.ass = new Vector();
-            assign.line = line;
-            assign.col = col;
-            assign.setOrigin(this.getOrigin());
-
-            assign.ass.addElement(sass);
-
-            result.addElement(assign);
 
             return result;
         }

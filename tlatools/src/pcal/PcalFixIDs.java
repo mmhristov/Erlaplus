@@ -89,8 +89,6 @@ public class PcalFixIDs {
             FixSendCall((AST.SendCall) ast, context);
         else if (ast.getClass().equals(AST.ReceiveCallObj.getClass()))
             FixReceiveCall((AST.ReceiveCall) ast, context);
-        else if (ast.getClass().equals(AST.GetAllProcsCallObj.getClass()))
-            FixGetAllProcsCall((AST.GetAllProcsCall) ast, context);
         else if (ast.getClass().equals(AST.FailObj.getClass()))
             FixFail((AST.Fail) ast, context);
         else if (ast.getClass().equals(AST.MaybeFailObj.getClass()))
@@ -112,11 +110,6 @@ public class PcalFixIDs {
     private static void FixSendCall(AST.SendCall ast, String context) throws PcalFixIDException {
         FixExpr(ast.message, context);
         FixExpr(ast.receiver, context);
-    }
-
-    private static void FixGetAllProcsCall(AST.GetAllProcsCall ast, String context) throws PcalFixIDException {
-        ast.targetVarName = st.UseThisVar(ast.targetVarName, context);
-        FixExpr(ast.targetExp, context);
     }
 
     private static void FixUniprocess (AST.Uniprocess ast, String context) throws PcalFixIDException {

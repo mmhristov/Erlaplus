@@ -1,6 +1,9 @@
 package pcal;
 
+import pcal.exception.TokenizerException;
+
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Vector;
 
@@ -16,7 +19,7 @@ public class PcalErlangGenUtil {
         return exprList;
     }
 
-    public static String formatVarAssignment(String left, String right, ProcessContext context) {
+    public static String formatVarAssignment(String left, String right, ErlangProcessContext context) {
         String prevStateVarName = context.getCurrentStateVarName();
         String currStateVarName = context.nextStateVarName();
         String stateRecName = context.getStateRecordName();
@@ -29,4 +32,10 @@ public class PcalErlangGenUtil {
         ) + ",";
     }
 
+    public static TLAExpr tokenizeTlaExpr(String tlaExpr) throws TokenizerException {
+        Vector<String> inputVec = new Vector<>();
+        inputVec.add(tlaExpr);
+        PcalCharReader reader = new PcalCharReader(inputVec,0,0,1,0);
+        return Tokenize.TokenizeExpr(reader);
+    }
 }

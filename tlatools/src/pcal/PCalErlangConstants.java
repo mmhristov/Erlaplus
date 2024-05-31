@@ -9,10 +9,6 @@ public final class PCalErlangConstants {
     // todo: make placeholders in template strings more readable by using e.g.
     //  StringSubstitutor From Apache Commons Text.
 
-    public static String ERLA_LIBS_MODULE_COMMUNICATION_NAME = "erla_libs_comm";
-    public static String ERLA_LIBS_MODULE_SETS_NAME = "erla_libs_sets";
-    public static String ERLA_LIBS_MODULE_UTIL_NAME = "erla_libs_util";
-
     public static String GLOBAL_QUEUES_NAME = "queues";
 
     public static int NUM_SPACES_FOR_INDENT = 4;
@@ -20,9 +16,9 @@ public final class PCalErlangConstants {
     public static String MODULE_DECL = "-module(%s)";
     public static String EXPORT_DECL = "-export[]";
 
-    public static String PREFIX_PROCESS_START_FUNC = "start_";
     public static String PREFIX_PROCESS_STATE_NAME = "state_";
     public static String PREFIX_VAR = "var_";
+    public static String PREFIX_CONSTANT_VAR = "const_";
     public static String PREFIX_INTERNAL_PROC_VAR = "procvar_";
     public static String PREFIX_RECORD_KEY = "key_";
     public static String PREFIX_FUNCTION_WHILE = "function_while";
@@ -47,15 +43,40 @@ public final class PCalErlangConstants {
 
     public static String SINGLE_LINE_COMMENT = Character.toString(COMMENT_CHAR) + Character.toString(COMMENT_CHAR) + " %s"; // escape % char for formatting
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /*
+        Constants
+     */
+    public static final String IS_TEST = "IS_TEST";
+    public static final String MACRO_INIT_VALUE = "change_me";
+    public static String MACRO_DEFINITION = "-define(%s, %s).";
+    public static String MACRO_USAGE = "?%s";
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /*
+        Erlang functions
+     */
+
     public static String PRINT_STATEMENT =  "erlang:display(%s)";
+    public static String INITIAL_FUNCTION_DECL = "maps:from_list(lists:map(%s, %s))";
+    public static String SET_FILTER = "sets:filter(fun(%s) -> %s end, %s)";
+
+    public static String ERLA_LIBS_MODULE_COMMUNICATION_NAME = "erla_libs_comm";
+    public static String ERLA_LIBS_MODULE_SETS_NAME = "erla_libs_sets";
+    public static String ERLA_LIBS_MODULE_UTIL_NAME = "erla_libs_util";
+
     public static String SEND_STATEMENT = ERLA_LIBS_MODULE_COMMUNICATION_NAME + ":send(%s, %s)"; // erla_libs:send(receiver, message)
     public static String BROADCAST_STATEMENT = ERLA_LIBS_MODULE_COMMUNICATION_NAME + ":broadcast(%s)"; // erla_libs:broadcast(message)
     public static String REGISTER_STATEMENT = ERLA_LIBS_MODULE_COMMUNICATION_NAME + ":register_proc(%s)";
-    public static String GET_ALL_PROCS_STATEMENT = ERLA_LIBS_MODULE_COMMUNICATION_NAME + ":get_all_procs()";
-    public static String INITIAL_FUNCTION_DECL = "maps:from_list(lists:map(%s, %s))";
     public static String RECORD_ACCESS_STATEMENT = ERLA_LIBS_MODULE_UTIL_NAME + ":get_nested_value(%s, [%s])";
     public static String RECORD_ACCESS_ASSIGNMENT = ERLA_LIBS_MODULE_UTIL_NAME + ":update_nested_value(%s, [%s], %s)";
-    public static String SET_FILTER = "sets:filter(fun(%s) -> %s end, %s)";
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /*
+        Main function
+     */
+    public static String PREFIX_PROCESS_START_FUNC = "start_";
+    public static String START_FUNC_INIT_PROCESS_SET = "[%s(Id) || Id <- sets:to_list(%s)]";
 
     /**
      * Send operation types.
@@ -66,7 +87,7 @@ public final class PCalErlangConstants {
 
         @Override
         public String toString() {
-            String result = "";
+            String result;
             switch (this) {
                 case SEND: result = "send"; break;
                 case BROADCAST: result = "broadcast"; break;

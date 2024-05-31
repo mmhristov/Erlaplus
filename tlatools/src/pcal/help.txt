@@ -80,3 +80,10 @@ what the TLA+ file must contain.  The possible options are
   -debug : This is useful only for maintainers of the program
            and has no effect on normal execution.
 
+  -erlang : Enables the translation to Erlang.
+
+  -genMain : Specifies whether the translator should generate a main function in the Erlang translation.
+            This flag is only useful in conjunction with "-erlang" and is meant as a demonstration of how to
+            start the generated processes.
+            If control over the order of how the translated processes are started is desired, then it is better
+            not to set this flag.

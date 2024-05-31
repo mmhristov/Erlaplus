@@ -45,15 +45,17 @@ public class TLAExprToErlangStrConverter {
                 Map.entry("*", new MapValueTuple("%s * %s", 4, false)),
                 Map.entry("\\o", new MapValueTuple("%s ++ %s", 6, false)),
                 Map.entry("^", new MapValueTuple("math:pow(%s, %s)", 3, false)),
-                Map.entry("..", new MapValueTuple("lists:seq(%s, %s)", 8, false)),
+                Map.entry("..", new MapValueTuple("sets:from_list(lists:seq(%s, %s))", 8, false)),
                 Map.entry("\\subseteq", new MapValueTuple("sets:is_subset(%s, %s ", 12, false)),
                 Map.entry("\\cap", new MapValueTuple("sets:intersection(%s, %s)", 9, false)),
                 Map.entry("\\cup", new MapValueTuple("sets:union(%s, %s)", 9, false)),
+                Map.entry("\\union", new MapValueTuple("sets:union(%s, %s)", 9, false)),
                 Map.entry("\\", new MapValueTuple("sets:subtract(%s, %s)", 9, false)),
                 Map.entry("\\in", new MapValueTuple("sets:is_element(%s, %s)", 12, false)),
                 Map.entry("UNION", new MapValueTuple("sets:union( sets:to_list(%s))", 9, false)),
                 Map.entry("SUBSET", new MapValueTuple(ERLA_LIBS_MODULE_SETS_NAME + ":powerSet(%s)", 9, false)),
                 Map.entry(".", new MapValueTuple("maps:get(%s, %s)", 1, false)), // record field access
+                Map.entry("@@", new MapValueTuple("maps:merge(%s, %s)", 11, false)), // record merge
                 Map.entry("Append", new MapValueTuple("%s ++ [%s]", 0, true)), // todo: check prio value
                 Map.entry("Head", new MapValueTuple("hd(%s)", 0, true)), // todo: check prio value
                 Map.entry("Tail", new MapValueTuple("tl(%s)", 0, true)), // todo: check prio value
@@ -65,11 +67,11 @@ public class TLAExprToErlangStrConverter {
         );
     }
 
-    public String TLAExprToErlangStr(TLAExpr expr, ProcessContext context) throws PcalErlangGenException {
+    public String TLAExprToErlangStr(TLAExpr expr, ErlangProcessContext context) throws PcalErlangGenException {
         return TLAExprToErlangStrInternal(TLAExprToList(expr), context);
     }
 
-    private String TLAExprToErlangStrInternal(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String TLAExprToErlangStrInternal(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         if (tokens.isEmpty()) {
             return "";
         }
@@ -114,13 +116,8 @@ public class TLAExprToErlangStrConverter {
                   Identifiers are for now only variables and record keys.
                  */
                 String pcalVarName = currTokenStr;
-                if (pcalVarName.equals("self")) {
-                    return genSelf(context);
-                }
                 currTokenStr = context.getErlangVarStr(pcalVarName);
                 if (tokens.size() > 1 && tokens.get(1).string.equals("[")) {
-                    // todo: differentiate between sequence access and function operations.
-                    //  (potentially extend context to contain type information for variables)
                     return genAccess(tokens, context);
                 }
             } else if (tokenType == TLAToken.BUILTIN) {
@@ -150,7 +147,7 @@ public class TLAExprToErlangStrConverter {
             TLAToken binaryOpToken = tokens.get(firstOpPos);
             MapValueTuple mapTuple = operatorMapping.get(binaryOpToken.string);
             String binaryOpErlangStr = mapTuple.string;
-            if (mapTuple.isFunction) {
+            if (mapTuple.isUnary) {
                 /*
                   Parse PlusCal functions
                  */
@@ -170,12 +167,18 @@ public class TLAExprToErlangStrConverter {
                 String leftStr = TLAExprToErlangStrInternal(left, context);
                 String rightStr = TLAExprToErlangStrInternal(right, context);
 
+                if (binaryOpToken.string.equals("@@")) { // todo: figure out a way to handle this more cleverly
+                    String temp = leftStr;
+                    leftStr = rightStr;
+                    rightStr = temp;
+                }
+
                 return "(" + String.format(binaryOpErlangStr, leftStr, rightStr) + ")";
             }
         }
     }
 
-    public String parseAssignment(AST.Lhs lhs, TLAExpr rhs, ProcessContext context) throws PcalErlangGenException {
+    public String parseAssignment(AST.Lhs lhs, TLAExpr rhs, ErlangProcessContext context) throws PcalErlangGenException {
         boolean isMemberAssignment = !lhs.sub.tokens.isEmpty();
         String pcalFieldName = lhs.var;
         String erlangFieldName = context.getFieldName(pcalFieldName);
@@ -201,24 +204,44 @@ public class TLAExprToErlangStrConverter {
         return formatVarAssignment(erlangFieldName, right, context);
     }
 
-    public String parseGetAllProcsCall(String pcalFieldName, ProcessContext context) {
-        return formatVarAssignment(context.getFieldName(pcalFieldName), GET_ALL_PROCS_STATEMENT, context);
+    /**
+     * Parses a definition and returns a tuple {name, value}, where "name" is the name of the definition in PlusCal and
+     *  "value" is the definition's value parsed in Erlang.
+     * @param def The definition to be parsed.
+     * @param context The current context.
+     * @return A tuple {name, value}, where "name" is the name of the definition in PlusCal and
+     *  "value" is the definition's value parsed in Erlang.
+     */
+    public Map.Entry<String, String> parseDefinition(Vector<TLAToken> def, ErlangDefinitionContext context) throws PcalErlangGenException {
+        // todo: provide context so that previously defined definitions can be used in other definition declarations
+        if (def.size() < 3) {
+            throw new PcalErlangGenException("Cannot parse definition \"" + def + "\". Invalid length." );
+        }
+        String pcalDefName = def.get(0).string;
+        if (!def.get(1).string.equals("==")) {
+            throw new PcalErlangGenException("Cannot parse definition \"" + def
+                    + "\". Expected second token to be \"==\", but was " + def.get(1).string
+            );
+        }
+
+        String value = this.TLAExprToErlangStrInternal(new ArrayList<>(def.subList(2, def.size())), context);
+
+        context.addDefinition(pcalDefName);
+
+        return Map.entry(pcalDefName, value);
     }
 
     /******************************************************************************************************************/
-    private String genSelf(ProcessContext context) {
-        return context.getProcNumberFieldAccess();
-    }
 
-    private String parseRecordAccess(List<TLAToken> left, List<TLAToken> right, String binaryOpErlangStr, ProcessContext context) throws PcalErlangGenException {
+    private String parseRecordAccess(List<TLAToken> left, List<TLAToken> right, String binaryOpErlangStr, ErlangProcessContext context) throws PcalErlangGenException {
         String leftStr = TLAExprToErlangStrInternal(left, context);
 
-        String recordKey = ProcessContext.createRecordKeyName(right.get(0).string); // todo: parse right properly, not only first ID
+        String recordKey = ErlangProcessContext.createRecordKeyName(right.get(0).string); // todo: parse right properly, not only first ID
 
         return String.format(binaryOpErlangStr, recordKey, leftStr);
     }
 
-    private String genAccess(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String genAccess(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         String erlangVar = context.getErlangVarStr(tokens.get(0).string);
         String keys = parseKeysToCommaSeparatedList(tokens, context);
         return String.format(RECORD_ACCESS_STATEMENT, erlangVar, keys);
@@ -226,18 +249,19 @@ public class TLAExprToErlangStrConverter {
 
     /**
      * Parses a possibly multidimensional member-access and produces a
-     *  comma-separated string representation of the keys.
-     * @param tokens the list of tokens, representing the member-access expression
+     * comma-separated string representation of the keys.
+     *
+     * @param tokens  the list of tokens, representing the member-access expression
      * @param context the process' context
      * @return a comma-separated string, containing the parsed key expressions
      */
-    private String parseKeysToCommaSeparatedList(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String parseKeysToCommaSeparatedList(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         List<List<TLAToken>> keysAsList = getKeysAsList(tokens);
         List<String> result = new ArrayList<>();
         // todo: add keys to record scope to fix the behavior of keys being overridden by variables of the same name
         context.startRecordScope();
         for (List<TLAToken> key : keysAsList) {
-            String parsedArgument  = TLAExprToErlangStrInternal(key, context);
+            String parsedArgument = TLAExprToErlangStrInternal(key, context);
             result.add(parsedArgument);
         }
         context.endRecordScope();
@@ -245,7 +269,7 @@ public class TLAExprToErlangStrConverter {
         return String.join(", ", result);
     }
 
-    private String parseFunctionOp(String binaryOpErlangStr, List<TLAToken> tokens, int firstOpPos, ProcessContext context) throws PcalErlangGenException {
+    private String parseFunctionOp(String binaryOpErlangStr, List<TLAToken> tokens, int firstOpPos, ErlangProcessContext context) throws PcalErlangGenException {
         // remove function identifier, "(" and ")"
         tokens.remove(firstOpPos);
         tokens.remove(firstOpPos);
@@ -262,7 +286,7 @@ public class TLAExprToErlangStrConverter {
         return String.format(binaryOpErlangStr, (Object[]) parameterArr);
     }
 
-    private String setGen(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String setGen(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         // remove "{}"
         tokens.remove(0);
         tokens.remove(tokens.size() - 1);
@@ -283,7 +307,7 @@ public class TLAExprToErlangStrConverter {
         int op = findHighestPriorityBinaryOperator(tokens);
         if (op == -1) {
             result += "[" + String.join(", ", parameters) + "])";
-        } else if(tokens.get(op).string.equals("..")){
+        } else if (tokens.get(op).string.equals("..")) {
             result += String.join(", ", parameters) + ")";
         } else {
             result += "[" + String.join(", ", parameters) + "])";
@@ -292,7 +316,7 @@ public class TLAExprToErlangStrConverter {
         return result;
     }
 
-    private String GenFilterSetExpr(List<TLAToken> left, List<TLAToken> right, ProcessContext context) throws PcalErlangGenException {
+    private String GenFilterSetExpr(List<TLAToken> left, List<TLAToken> right, ErlangProcessContext context) throws PcalErlangGenException {
         /*
             For now, we only support expressions of the following type:
                 {x \in Xs : P(x)}, where P(x) is a predicate (specifically a boolean TLA expression) and Xs is a set.
@@ -318,7 +342,7 @@ public class TLAExprToErlangStrConverter {
         return String.format(SET_FILTER, tempVarName, parsedFilterExpr, set);
     }
 
-    private String sequenceGen(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String sequenceGen(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         // remove "<<>>"
         tokens.remove(0);
         tokens.remove(tokens.size() - 1);
@@ -328,7 +352,7 @@ public class TLAExprToErlangStrConverter {
         return "[" + String.join(", ", parameters) + "]";
     }
 
-    private String recordGen(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String recordGen(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         // remove "[", "]"
         tokens.remove(0);
         tokens.remove(tokens.size() - 1);
@@ -344,7 +368,7 @@ public class TLAExprToErlangStrConverter {
         return String.format("#{%s}", argStr);
     }
 
-    private ArrayList<String> parseRecordArguments(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private ArrayList<String> parseRecordArguments(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         ArrayList<String> keyValueStrings = new ArrayList<>();
 
         PCalTokenIterator iterator = new PCalTokenIterator(tokens);
@@ -376,7 +400,7 @@ public class TLAExprToErlangStrConverter {
         return keyValueStrings;
     }
 
-    private String parseKeyValuePair(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String parseKeyValuePair(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         String key = "";
         PCalTokenIterator iterator = new PCalTokenIterator(tokens);
         int keyValueSeparatorPos = iterator.getNextPosForStrInScope("|->");
@@ -403,7 +427,7 @@ public class TLAExprToErlangStrConverter {
 
         // return result
         if (!isSetKey) {
-            key = ProcessContext.createRecordKeyName(tokens.get(0).string); // format erlang key string
+            key = ErlangProcessContext.createRecordKeyName(tokens.get(0).string); // format erlang key string
             return String.format("%s => %s", key, val);
         } else {
             return String.format("maps:from_list([{Key, %s} || Key <- sets:to_list(%s)])", val, key);
@@ -417,7 +441,7 @@ public class TLAExprToErlangStrConverter {
      * @param context The process context.
      * @return An array of type Object, containing the parsed argument strings.
      */
-    private String[] parseArguments(List<TLAToken> tokens, ProcessContext context) throws PcalErlangGenException {
+    private String[] parseArguments(List<TLAToken> tokens, ErlangProcessContext context) throws PcalErlangGenException {
         // calculate the maximum number of arguments
         int maxNumberOfArguments = (int) Math.floor((double) (tokens.size() + 1) / 2);
 
@@ -462,7 +486,7 @@ public class TLAExprToErlangStrConverter {
         return Arrays.copyOf(argumentArr, numberOfArgs);
     }
 
-  /********************************************************************************************************************/
+    /********************************************************************************************************************/
 
     private int findNextCommaPos(PCalTokenIterator iterator) {
         TLAToken currentToken = iterator.nextTokenInScope();
@@ -482,7 +506,7 @@ public class TLAExprToErlangStrConverter {
      * @param context The process context.
      * @return The translated token as an erlang string.
      */
-    private String parseSingleToken(TLAToken token, ProcessContext context) throws PcalErlangGenException {
+    private String parseSingleToken(TLAToken token, ErlangProcessContext context) throws PcalErlangGenException {
         // build list with single token
         ArrayList<TLAToken> singleTokenList = new ArrayList<>();
         singleTokenList.add(token);
@@ -521,8 +545,9 @@ public class TLAExprToErlangStrConverter {
     /**
      * Receives a possibly multidimensional member access expression as a list of tokens
      * and returns a list of the arguments, e.g.
-     *      input: "a[0][2]"
-     *      output: listOf(0, 2).
+     * input: "a[0][2]"
+     * output: listOf(0, 2).
+     *
      * @param tokens the member access expression, from which the arguments are to be returned
      * @return the list of arguments, contained in the input expression
      */
@@ -540,7 +565,7 @@ public class TLAExprToErlangStrConverter {
         int openingPos = -1;
         int closingPos;
         while (token != null) {
-            if (token.string.equals("[") ) {
+            if (token.string.equals("[")) {
                 openingPos = iterator.getCurrentPos();
                 bracketCount++;
             } else if (token.string.equals("]")) {

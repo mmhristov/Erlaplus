@@ -61,6 +61,7 @@ public final class PcalParams
         PcalTLAGen.ssWrapColumn = 45;
         tlaPcalMapping = null ;
         TranslateErlang = false;
+        GenErlangMainFunction = false;
     }
     
     
@@ -275,6 +276,8 @@ public final class PcalParams
   public static TLAtoPCalMapping  tlaPcalMapping ;
   
   public static boolean TranslateErlang = false;
+
+  public static boolean GenErlangMainFunction = false;
   
   /**
    * If str is a version number like 3.17, then this returns 1000 times

@@ -7,11 +7,8 @@
 main() ->
   % create raft nodes
   Node1 = raft_Erla:start_process_raftNode(1),
-  global:sync(),
   Node2 = raft_Erla:start_process_raftNode(2),
-  global:sync(),
   Node3 = raft_Erla:start_process_raftNode(3),
-  global:sync(),
 
   timer:sleep(5000),
 

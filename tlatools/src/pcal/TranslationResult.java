@@ -1,6 +1,7 @@
 package pcal;
 
 import java.util.List;
+import java.util.Vector;
 
 /**
  * A class, which saves all the translation results from trans.performTranslation()
@@ -12,15 +13,18 @@ public class TranslationResult {
 	// The translated TLA+ code 
 	private List<String> tlaCode = null;
 	// The translated Erlang code 
-	private List<String> erlangCode = null; 
+	private PcalErlangGenResult erlangResult = null;
 	
-	public TranslationResult(List<String> tla, List<String> erlang) {
+	public TranslationResult(List<String> tla, PcalErlangGenResult erlangResult) {
 		this.tlaCode = tla;
-		this.erlangCode = erlang;
+		this.erlangResult = erlangResult;
 	}
 
-	public List<String> getErlangCode() {
-		return erlangCode;
+	public Vector<String> getErlangCode() {
+		if (erlangResult != null) {
+			return erlangResult.getCode();
+		}
+		return null;
 	}
 
 	public List<String> getTlaCode() {

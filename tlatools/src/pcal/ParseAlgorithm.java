@@ -1100,8 +1100,6 @@ public class ParseAlgorithm
                    return GetSendCall(nextTok);
                case "receive":
                    return GetReceiveCall();
-               case "getAllProcs":
-                   return GetGetAllProcsCall(nextTok);
                case "fail":
                    return GetFail();
                case "maybeFail":
@@ -2567,8 +2565,6 @@ public class ParseAlgorithm
                         || node.getClass().equals(
                                 AST.SendCallObj.getClass())
                         || node.getClass().equals(
-                                AST.GetAllProcsCallObj.getClass())
-                        || node.getClass().equals(
                                 AST.FailObj.getClass())
                         || node.getClass().equals(
                                 AST.MaybeFailObj.getClass()))
@@ -3063,24 +3059,6 @@ public class ParseAlgorithm
             result.exp  = tstmt.exp.cloneAndNormalize() ;
             result.exp.substituteForAll(args, params) ;
             return result;
-          } ;
-
-          if (stmt.getClass().equals( AST.GetAllProcsCallObj.getClass()))
-          { AST.GetAllProcsCall tstmt = (AST.GetAllProcsCall) stmt ;
-              AST.GetAllProcsCall result = tstmt.deepCopy();
-              result.col  = tstmt.col ;
-              result.line = tstmt.line ;
-              result.macroCol  = tstmt.macroCol ;
-              result.macroLine = tstmt.macroLine ;
-              result.setOrigin(tstmt.getOrigin()) ;
-              if (macroLine > 0)
-              { result.macroLine = macroLine ;
-                  result.macroCol  = macroCol ;
-              } ;
-              result.targetExp  = tstmt.targetExp.cloneAndNormalize() ;
-              result.targetVarName = tstmt.targetVarName ;
-              result.targetExp.substituteForAll(args, params) ;
-              return result;
           } ;
 
           if ( stmt.getClass().equals( AST.SendCallObj.getClass() ) )
@@ -4672,21 +4650,6 @@ public class ParseAlgorithm
         MustGobbleThis("(");
         result.col  = lastTokCol ;
         result.line = lastTokLine ;
-        result.targetVarName = GetAlgToken();
-        result.targetExp = GetExpr();
-        GobbleThis(")");
-        GobbleThis(";");
-        result.setOrigin(new Region(beginLoc, GetLastLocationEnd()));
-        return result;
-    }
-
-    private static AST GetGetAllProcsCall(String nextTok) throws ParseAlgorithmException {
-        AST.GetAllProcsCall result = new AST.GetAllProcsCall();
-        PCalLocation beginLoc = GetLastLocationStart();
-        MustGobbleThis("getAllProcs");
-        MustGobbleThis("(");
-        result.col = lastTokCol;
-        result.line = lastTokLine;
         result.targetVarName = GetAlgToken();
         result.targetExp = GetExpr();
         GobbleThis(")");

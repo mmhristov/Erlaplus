@@ -36,7 +36,7 @@ MinAcc(s, e1) ==
         end if;
     end macro;
 
-    macro UpdateTerm(i, m, currentTerm, role, votedFor, leader)
+    macro UpdateTerm(m, currentTerm, role, votedFor, leader)
     begin
         if (m.mterm > currentTerm) then
             currentTerm := m.mterm;
@@ -46,16 +46,16 @@ MinAcc(s, e1) ==
         end if;
     end macro;
 
-    macro CalculateIsQuorum(result, s, allProcsSize)
+    macro CalculateIsQuorum(result, s)
     begin
-        result := Cardinality(s) * 2 > allProcsSize;
+        result := Cardinality(s) * 2 > NumRaftNodes;
     end macro;
 
-    macro BecomeLeader(role, nextIndex, matchIndex, allProcsSet, log, leader)
+    macro BecomeLeader(role, nextIndex, matchIndex, log, leader)
     begin
         role := "leader";
-        nextIndex := [j \in allProcsSet |-> Len(log) + 1];
-        matchIndex := [j \in allProcsSet |-> 0];
+        nextIndex := [j \in ServerSet |-> Len(log) + 1];
+        matchIndex := [j \in ServerSet |-> 0];
         leader := self;
         print <<"BecomeLeader", ToString(self)>>;
     end macro;
@@ -70,12 +70,6 @@ MinAcc(s, e1) ==
                 stateMachine := Append(stateMachine, [mtype |-> "AcceptMessage", mcmd  |-> cmd]);
             end with;
         end while;
-    end macro;
-
-    macro GetRaftNodesSet(allProcs)
-    begin
-        allProcs := {p \in allProcs : p < 100}; \* assume maximum node Id is 100, todo: change this
-\*        print <<"RaftNodes", allProcs>>;
     end macro;
 
     fair process raftNode \in ServerSet
@@ -98,8 +92,6 @@ MinAcc(s, e1) ==
         logOK = FALSE;
         grant = FALSE;
         isQuorum = FALSE;
-        allProcs = {};
-        allProcsSize = 0;
         temp_i = 0;
         isDone = FALSE;
         prevLogTerm = 0;
@@ -125,28 +117,31 @@ MinAcc(s, e1) ==
                 votesGranted := {self};
 
                 LastTerm(lastTermVar, log);
-                getAllProcs(allProcs);
-            getAllProcsSingleLeader:
-                GetRaftNodesSet(allProcs); \* get set of all raft nodes
-                allProcsSize := Cardinality(allProcs);
-                if (allProcsSize = 1) then
+            checkCardinalityTimeout:
+                if (Cardinality(ServerSet) = 1) then
                 becomeLeaderWhenAlone:
-                    BecomeLeader(role, nextIndex, matchIndex, allProcs, log, leader);
+                    BecomeLeader(role, nextIndex, matchIndex, log, leader);
                 else
+                    temp_i := 1;
                 broadcastRequestVoteRequest:
-                    broadcast([
-                        mtype         |-> "RequestVoteRequest",
-                        mterm         |-> currentTerm,
-                        mlastLogTerm  |-> lastTermVar,
-                        mlastLogIndex |-> Len(log),
-                        msource       |-> self
-                    ]); \* care: broadcast also sends message to self
+                    while (temp_i <= Cardinality(ServerSet)) do
+                        if (temp_i # self) then \* do not send AppendEntriesRequest to self
+                                send([
+                                    mtype         |-> "RequestVoteRequest",
+                                    mterm         |-> currentTerm,
+                                    mlastLogTerm  |-> lastTermVar,
+                                    mlastLogIndex |-> Len(log),
+                                    msource       |-> self
+                                ], temp_i);
+                        end if;
+                        temp_i := temp_i + 1;
+                    end while;
                 end if;
             elsif (msg.mtype = "RequestVoteRequest") then
                 if (msg.msource = self) then
                     skip; \* do not handle broadcast message sent from self
                 else
-                    UpdateTerm(self, msg, currentTerm, role, votedFor, leader);
+                    UpdateTerm(msg, currentTerm, role, votedFor, leader);
                     LastTerm(lastTermVar, log);
                     \* HandleRequestVote
                     logOK := (msg.mlastLogTerm > lastTermVar) \/ (msg.mlastLogTerm = lastTermVar /\ msg.mlastLogIndex >= Len(log));
@@ -167,7 +162,7 @@ MinAcc(s, e1) ==
                     ], msg.msource);
                 end if;
             elsif (msg.mtype = "RequestVoteResponse") then
-                UpdateTerm(self, msg, currentTerm, role, votedFor, leader);
+                UpdateTerm(msg, currentTerm, role, votedFor, leader);
                 if (msg.mterm < currentTerm) then
                     \* drop stale response
                     skip;
@@ -181,20 +176,17 @@ MinAcc(s, e1) ==
                         if (role = "leader") then
                             skip;
                         else
-                            getAllProcs(allProcs);
-                        getRaftNodes1:
-                            GetRaftNodesSet(allProcs); \* get set of all raft nodes
-                            allProcsSize := Cardinality(allProcs);
-                            CalculateIsQuorum(isQuorum, votesGranted, allProcsSize);
+                        calculateQuorumHandleRequestVoteResponse:
+                            CalculateIsQuorum(isQuorum, votesGranted);
                             if (role = "candidate" /\ isQuorum) then
                             becomeLeader:
-                                BecomeLeader(role, nextIndex, matchIndex, allProcs, log, leader);
+                                BecomeLeader(role, nextIndex, matchIndex, log, leader);
                             end if;
                         end if;
                     end if;
                 end if;
             elsif (msg.mtype = "AppendEntriesRequest") then
-                UpdateTerm(self, msg, currentTerm, role, votedFor, leader);
+                UpdateTerm(msg, currentTerm, role, votedFor, leader);
                 logOK := msg.mprevLogIndex = 0 \/ (msg.mprevLogIndex > 0 /\ msg.mprevLogIndex <= Len(log) /\ msg.mprevLogTerm = log[msg.mprevLogIndex].term);
 
                 \* HandleAppendEntriesRequest
@@ -236,7 +228,7 @@ MinAcc(s, e1) ==
                     ], msg.msource)
                 end if;
             elsif (msg.mtype = "AppendEntriesResponse") then
-                UpdateTerm(self, msg, currentTerm, role, votedFor, leader);
+                UpdateTerm(msg, currentTerm, role, votedFor, leader);
 
                 print <<"Handle AppendEntriesResponse", msg.msource, msg.msuccess, msg.mmatchIndex, msg.mterm>>;
 
@@ -251,7 +243,7 @@ MinAcc(s, e1) ==
                         nextIndex[msg.msource] := msg.mmatchIndex + 1;
                         matchIndex[msg.msource] := msg.mmatchIndex;
                     else
-                        if ((nextIndex[msg.msource] - 1) < 1) then \* todo: use Max function if implemented instead of if-statement
+                        if ((nextIndex[msg.msource] - 1) < 1) then
                             nextIndex[msg.msource] := nextIndex[msg.msource] - 1;
                         else
                             nextIndex[msg.msource] := 1;
@@ -265,11 +257,8 @@ MinAcc(s, e1) ==
                         isDone := FALSE;
                     findMaxAgreeIndex:
                         while ((temp_i > 0) /\ (~ isDone)) do
-                            getAllProcs(allProcs);
-                        getRaftNodes2:
-                            GetRaftNodesSet(allProcs); \* get set of all raft nodes
-                            allProcsSize := Cardinality(allProcs);
-                            CalculateIsQuorum(isQuorum, {self} \cup {k \in allProcs : matchIndex[k] >= temp_i}, allProcsSize);
+                        calculateQuorum:
+                            CalculateIsQuorum(isQuorum, {self} \cup {k \in ServerSet : matchIndex[k] >= temp_i});
                             if (isQuorum) then
                                 maxAgreeIndex := temp_i;
                                 isDone := TRUE;
@@ -287,7 +276,7 @@ MinAcc(s, e1) ==
                     advanceCommitIndexLeader:
                         AdvanceCommitIndex(commitIndex, newCommitIndex, log, stateMachine); \* commit
                     end if;
-                    end if;
+                end if;
             elsif (msg.mtype = "ProposeMessage") then
                 print <<"Handle ProposeMessage", self>>;
 
@@ -298,14 +287,10 @@ MinAcc(s, e1) ==
 
                     maybeFail();
 
-                    getAllProcs(allProcs);
-                getRaftNodes3:
-                    GetRaftNodesSet(allProcs); \* get set of all raft nodes
-                    allProcsSize := Cardinality(allProcs);
-                    iterateOverProcesses:
+                iterateOverProcesses:
                     temp_i := 1;
-                    assign_i:
-                    while (temp_i <= allProcsSize) do
+                assign_i:
+                    while (temp_i <= Cardinality(ServerSet)) do
                      \* todo: maybe send AppendEntriesRequest to self in order to enable commiting of messages when there are no followers
                         if (temp_i # self) then \* do not send AppendEntriesRequest to self
                             with prevLogIndex = nextIndex[temp_i] - 1, entries = SubSeq(log, nextIndex[temp_i], Len(log)) do
@@ -350,25 +335,18 @@ MinAcc(s, e1) ==
 
     fair process timeouter \in TimeouterSet
     variables
-        allProcs = {};
-        allProcsSize = 0;
         timeoutMsg = [mtype |-> "timeout"];
     begin
     sendTimeout:
          maybeFail(); \* ensure non-deterministic timeouts
-        getAllProcs(allProcs);\*
     getRaftNodes4:
-        GetRaftNodesSet(allProcs); \* get set of all raft nodes
-        allProcsSize := Cardinality(allProcs);
-        send(timeoutMsg, (self % allProcsSize) + 1);
+        send(timeoutMsg, (((self - 1) % Cardinality(ServerSet)) + 1));
     end process;
 
 end algorithm
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "e7274f11" /\ chksum(tla) = "45d99c22")
-\* Process variable msg of process raftNode at line 96 col 9 changed to msg_
-\* Process variable allProcs of process raftNode at line 101 col 9 changed to allProcs_
-\* Process variable allProcsSize of process raftNode at line 102 col 9 changed to allProcsSize_
+\* BEGIN TRANSLATION (chksum(pcal) = "a5173e68" /\ chksum(tla) = "a567926e")
+\* Process variable msg of process raftNode at line 90 col 9 changed to msg_
 VARIABLES queues, pc
 
 (* define statement *)
@@ -379,17 +357,14 @@ NodeSet == ClientSet \union ServerSet
 
 VARIABLES stateMachine, role, log, currentTerm, votedFor, votesResponded, 
           votesGranted, leader, nextIndex, matchIndex, commitIndex, 
-          fAdvCommitIdxCh, msg_, lastTermVar, logOK, grant, isQuorum, 
-          allProcs_, allProcsSize_, temp_i, isDone, prevLogTerm, 
-          newCommitIndex, maxAgreeIndex, msg, allProcs, allProcsSize, 
-          timeoutMsg
+          fAdvCommitIdxCh, msg_, lastTermVar, logOK, grant, isQuorum, temp_i, 
+          isDone, prevLogTerm, newCommitIndex, maxAgreeIndex, msg, timeoutMsg
 
 vars == << queues, pc, stateMachine, role, log, currentTerm, votedFor, 
            votesResponded, votesGranted, leader, nextIndex, matchIndex, 
            commitIndex, fAdvCommitIdxCh, msg_, lastTermVar, logOK, grant, 
-           isQuorum, allProcs_, allProcsSize_, temp_i, isDone, prevLogTerm, 
-           newCommitIndex, maxAgreeIndex, msg, allProcs, allProcsSize, 
-           timeoutMsg >>
+           isQuorum, temp_i, isDone, prevLogTerm, newCommitIndex, 
+           maxAgreeIndex, msg, timeoutMsg >>
 
 ProcSet == (ServerSet) \cup (ClientSet) \cup (TimeouterSet)
 
@@ -413,8 +388,6 @@ Init == (* Global variables *)
         /\ logOK = [self \in ServerSet |-> FALSE]
         /\ grant = [self \in ServerSet |-> FALSE]
         /\ isQuorum = [self \in ServerSet |-> FALSE]
-        /\ allProcs_ = [self \in ServerSet |-> {}]
-        /\ allProcsSize_ = [self \in ServerSet |-> 0]
         /\ temp_i = [self \in ServerSet |-> 0]
         /\ isDone = [self \in ServerSet |-> FALSE]
         /\ prevLogTerm = [self \in ServerSet |-> 0]
@@ -423,8 +396,6 @@ Init == (* Global variables *)
         (* Process client *)
         /\ msg = [self \in ClientSet |-> [mtype |-> "ProposeMessage", mcmd |-> [data |-> "hello"]]]
         (* Process timeouter *)
-        /\ allProcs = [self \in TimeouterSet |-> {}]
-        /\ allProcsSize = [self \in TimeouterSet |-> 0]
         /\ timeoutMsg = [self \in TimeouterSet |-> [mtype |-> "timeout"]]
         /\ pc = [self \in ProcSet |-> CASE self \in ServerSet -> "leaderElectionLoop"
                                         [] self \in ClientSet -> "propose"
@@ -449,8 +420,7 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                        /\ IF (Len(log[self]) = 0)
                                              THEN /\ lastTermVar' = [lastTermVar EXCEPT ![self] = 0]
                                              ELSE /\ lastTermVar' = [lastTermVar EXCEPT ![self] = log[self][Len(log[self])].term]
-                                       /\ allProcs_' = [allProcs_ EXCEPT ![self] = DOMAIN queues']
-                                       /\ pc' = [pc EXCEPT ![self] = "getAllProcsSingleLeader"]
+                                       /\ pc' = [pc EXCEPT ![self] = "checkCardinalityTimeout"]
                                        /\ UNCHANGED << log, leader, nextIndex, 
                                                        matchIndex, logOK, 
                                                        grant, temp_i, isDone, 
@@ -482,7 +452,7 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                              /\ logOK' = [logOK EXCEPT ![self] = (msg_'[self].mlastLogTerm > lastTermVar'[self]) \/ (msg_'[self].mlastLogTerm = lastTermVar'[self] /\ msg_'[self].mlastLogIndex >= Len(log[self]))]
                                                              /\ grant' = [grant EXCEPT ![self] = (msg_'[self].mterm = currentTerm'[self]) /\ logOK'[self] /\ (votedFor'[self] \in {0, msg_'[self].msource})]
                                                              /\ Assert(msg_'[self].mterm <= currentTerm'[self], 
-                                                                       "Failure of assertion at line 155, column 21.")
+                                                                       "Failure of assertion at line 150, column 21.")
                                                              /\ IF (grant'[self])
                                                                    THEN /\ pc' = [pc EXCEPT ![self] = "writeVotedFor"]
                                                                    ELSE /\ pc' = [pc EXCEPT ![self] = "sendRequestVoteResponse"]
@@ -491,7 +461,6 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                                   votesGranted, 
                                                                   nextIndex, 
                                                                   matchIndex, 
-                                                                  allProcs_, 
                                                                   temp_i, 
                                                                   isDone, 
                                                                   maxAgreeIndex >>
@@ -510,22 +479,18 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                                    THEN /\ TRUE
                                                                         /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
                                                                         /\ UNCHANGED << votesResponded, 
-                                                                                        votesGranted, 
-                                                                                        allProcs_ >>
+                                                                                        votesGranted >>
                                                                    ELSE /\ Assert(msg_'[self].mterm = currentTerm'[self], 
-                                                                                  "Failure of assertion at line 176, column 21.")
+                                                                                  "Failure of assertion at line 171, column 21.")
                                                                         /\ votesResponded' = [votesResponded EXCEPT ![self] = votesResponded[self] \cup {self}]
                                                                         /\ IF (msg_'[self].mvoteGranted)
                                                                               THEN /\ votesGranted' = [votesGranted EXCEPT ![self] = votesGranted[self] \cup {msg_'[self].msource}]
                                                                                    /\ IF (role'[self] = "leader")
                                                                                          THEN /\ TRUE
                                                                                               /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
-                                                                                              /\ UNCHANGED allProcs_
-                                                                                         ELSE /\ allProcs_' = [allProcs_ EXCEPT ![self] = DOMAIN queues']
-                                                                                              /\ pc' = [pc EXCEPT ![self] = "getRaftNodes1"]
+                                                                                         ELSE /\ pc' = [pc EXCEPT ![self] = "calculateQuorumHandleRequestVoteResponse"]
                                                                               ELSE /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
-                                                                                   /\ UNCHANGED << votesGranted, 
-                                                                                                   allProcs_ >>
+                                                                                   /\ UNCHANGED votesGranted
                                                              /\ UNCHANGED << log, 
                                                                              nextIndex, 
                                                                              matchIndex, 
@@ -546,14 +511,13 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                                                                    leader >>
                                                                         /\ logOK' = [logOK EXCEPT ![self] = msg_'[self].mprevLogIndex = 0 \/ (msg_'[self].mprevLogIndex > 0 /\ msg_'[self].mprevLogIndex <= Len(log[self]) /\ msg_'[self].mprevLogTerm = log[self][msg_'[self].mprevLogIndex].term)]
                                                                         /\ Assert(msg_'[self].mterm <= currentTerm'[self], 
-                                                                                  "Failure of assertion at line 201, column 17.")
+                                                                                  "Failure of assertion at line 193, column 17.")
                                                                         /\ IF (msg_'[self].mterm = currentTerm'[self])
                                                                               THEN /\ pc' = [pc EXCEPT ![self] = "setLeaderHandleAppendEntriesRequest"]
                                                                               ELSE /\ pc' = [pc EXCEPT ![self] = "returnToFollowerHandleAppendEntriesRequest"]
                                                                         /\ UNCHANGED << log, 
                                                                                         nextIndex, 
                                                                                         matchIndex, 
-                                                                                        allProcs_, 
                                                                                         temp_i, 
                                                                                         isDone, 
                                                                                         maxAgreeIndex >>
@@ -578,7 +542,7 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                                                                               isDone, 
                                                                                                               maxAgreeIndex >>
                                                                                          ELSE /\ Assert(msg_'[self].mterm = currentTerm'[self], 
-                                                                                                        "Failure of assertion at line 248, column 21.")
+                                                                                                        "Failure of assertion at line 240, column 21.")
                                                                                               /\ IF (msg_'[self].msuccess)
                                                                                                     THEN /\ nextIndex' = [nextIndex EXCEPT ![self][msg_'[self].msource] = msg_'[self].mmatchIndex + 1]
                                                                                                          /\ matchIndex' = [matchIndex EXCEPT ![self][msg_'[self].msource] = msg_'[self].mmatchIndex]
@@ -595,8 +559,7 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                                                                          /\ UNCHANGED << temp_i, 
                                                                                                                          isDone, 
                                                                                                                          maxAgreeIndex >>
-                                                                                   /\ UNCHANGED << log, 
-                                                                                                   allProcs_ >>
+                                                                                   /\ log' = log
                                                                               ELSE /\ IF (msg_'[self].mtype = "ProposeMessage")
                                                                                          THEN /\ PrintT(<<"Handle ProposeMessage", self>>)
                                                                                               /\ IF (role[self] = "leader")
@@ -604,16 +567,13 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                                                                               log' = [log EXCEPT ![self] = Append(log[self], entry)]
                                                                                                          /\ \/ /\ FALSE
                                                                                                             \/ /\ TRUE
-                                                                                                         /\ allProcs_' = [allProcs_ EXCEPT ![self] = DOMAIN queues']
-                                                                                                         /\ pc' = [pc EXCEPT ![self] = "getRaftNodes3"]
+                                                                                                         /\ pc' = [pc EXCEPT ![self] = "iterateOverProcesses"]
                                                                                                     ELSE /\ IF (leader[self] # 0)
                                                                                                                THEN /\ pc' = [pc EXCEPT ![self] = "redirectProposeMessageToLeader"]
                                                                                                                ELSE /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
-                                                                                                         /\ UNCHANGED << log, 
-                                                                                                                         allProcs_ >>
+                                                                                                         /\ log' = log
                                                                                          ELSE /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
-                                                                                              /\ UNCHANGED << log, 
-                                                                                                              allProcs_ >>
+                                                                                              /\ log' = log
                                                                                    /\ UNCHANGED << role, 
                                                                                                    currentTerm, 
                                                                                                    votedFor, 
@@ -630,32 +590,30 @@ leaderElectionLoop(self) == /\ pc[self] = "leaderElectionLoop"
                                                                   grant >>
                             /\ UNCHANGED << stateMachine, commitIndex, 
                                             fAdvCommitIdxCh, isQuorum, 
-                                            allProcsSize_, prevLogTerm, 
-                                            newCommitIndex, msg, allProcs, 
-                                            allProcsSize, timeoutMsg >>
+                                            prevLogTerm, newCommitIndex, msg, 
+                                            timeoutMsg >>
 
-getAllProcsSingleLeader(self) == /\ pc[self] = "getAllProcsSingleLeader"
-                                 /\ allProcs_' = [allProcs_ EXCEPT ![self] = {p \in allProcs_[self] : p < 100}]
-                                 /\ allProcsSize_' = [allProcsSize_ EXCEPT ![self] = Cardinality(allProcs_'[self])]
-                                 /\ IF (allProcsSize_'[self] = 1)
+checkCardinalityTimeout(self) == /\ pc[self] = "checkCardinalityTimeout"
+                                 /\ IF (Cardinality(ServerSet) = 1)
                                        THEN /\ pc' = [pc EXCEPT ![self] = "becomeLeaderWhenAlone"]
-                                       ELSE /\ pc' = [pc EXCEPT ![self] = "broadcastRequestVoteRequest"]
+                                            /\ UNCHANGED temp_i
+                                       ELSE /\ temp_i' = [temp_i EXCEPT ![self] = 1]
+                                            /\ pc' = [pc EXCEPT ![self] = "broadcastRequestVoteRequest"]
                                  /\ UNCHANGED << queues, stateMachine, role, 
                                                  log, currentTerm, votedFor, 
                                                  votesResponded, votesGranted, 
                                                  leader, nextIndex, matchIndex, 
                                                  commitIndex, fAdvCommitIdxCh, 
                                                  msg_, lastTermVar, logOK, 
-                                                 grant, isQuorum, temp_i, 
-                                                 isDone, prevLogTerm, 
-                                                 newCommitIndex, maxAgreeIndex, 
-                                                 msg, allProcs, allProcsSize, 
+                                                 grant, isQuorum, isDone, 
+                                                 prevLogTerm, newCommitIndex, 
+                                                 maxAgreeIndex, msg, 
                                                  timeoutMsg >>
 
 becomeLeaderWhenAlone(self) == /\ pc[self] = "becomeLeaderWhenAlone"
                                /\ role' = [role EXCEPT ![self] = "leader"]
-                               /\ nextIndex' = [nextIndex EXCEPT ![self] = [j \in allProcs_[self] |-> Len(log[self]) + 1]]
-                               /\ matchIndex' = [matchIndex EXCEPT ![self] = [j \in allProcs_[self] |-> 0]]
+                               /\ nextIndex' = [nextIndex EXCEPT ![self] = [j \in ServerSet |-> Len(log[self]) + 1]]
+                               /\ matchIndex' = [matchIndex EXCEPT ![self] = [j \in ServerSet |-> 0]]
                                /\ leader' = [leader EXCEPT ![self] = self]
                                /\ PrintT(<<"BecomeLeader", ToString(self)>>)
                                /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
@@ -664,17 +622,22 @@ becomeLeaderWhenAlone(self) == /\ pc[self] = "becomeLeaderWhenAlone"
                                                votesResponded, votesGranted, 
                                                commitIndex, fAdvCommitIdxCh, 
                                                msg_, lastTermVar, logOK, grant, 
-                                               isQuorum, allProcs_, 
-                                               allProcsSize_, temp_i, isDone, 
+                                               isQuorum, temp_i, isDone, 
                                                prevLogTerm, newCommitIndex, 
-                                               maxAgreeIndex, msg, allProcs, 
-                                               allProcsSize, timeoutMsg >>
+                                               maxAgreeIndex, msg, timeoutMsg >>
 
 broadcastRequestVoteRequest(self) == /\ pc[self] = "broadcastRequestVoteRequest"
-                                     /\ \/ /\ queues' = [erla_proc \in DOMAIN queues |-> Append(queues[erla_proc],         [mtype         |-> "RequestVoteRequest",mterm         |-> currentTerm[self],mlastLogTerm  |-> lastTermVar[self],mlastLogIndex |-> Len(log[self]),msource       |-> self])]
-                                        \/ /\ TRUE
-                                           /\ UNCHANGED queues
-                                     /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
+                                     /\ IF (temp_i[self] <= Cardinality(ServerSet))
+                                           THEN /\ IF (temp_i[self] # self)
+                                                      THEN /\ \/ /\ queues' = [queues EXCEPT ![temp_i[self]] =  Append(queues[temp_i[self]],    [mtype         |-> "RequestVoteRequest",mterm         |-> currentTerm[self],mlastLogTerm  |-> lastTermVar[self],mlastLogIndex |-> Len(log[self]),msource       |-> self])]
+                                                              \/ /\ TRUE
+                                                                 /\ UNCHANGED queues
+                                                      ELSE /\ TRUE
+                                                           /\ UNCHANGED queues
+                                                /\ temp_i' = [temp_i EXCEPT ![self] = temp_i[self] + 1]
+                                                /\ pc' = [pc EXCEPT ![self] = "broadcastRequestVoteRequest"]
+                                           ELSE /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
+                                                /\ UNCHANGED << queues, temp_i >>
                                      /\ UNCHANGED << stateMachine, role, log, 
                                                      currentTerm, votedFor, 
                                                      votesResponded, 
@@ -683,12 +646,10 @@ broadcastRequestVoteRequest(self) == /\ pc[self] = "broadcastRequestVoteRequest"
                                                      commitIndex, 
                                                      fAdvCommitIdxCh, msg_, 
                                                      lastTermVar, logOK, grant, 
-                                                     isQuorum, allProcs_, 
-                                                     allProcsSize_, temp_i, 
-                                                     isDone, prevLogTerm, 
+                                                     isQuorum, isDone, 
+                                                     prevLogTerm, 
                                                      newCommitIndex, 
                                                      maxAgreeIndex, msg, 
-                                                     allProcs, allProcsSize, 
                                                      timeoutMsg >>
 
 sendRequestVoteResponse(self) == /\ pc[self] = "sendRequestVoteResponse"
@@ -702,11 +663,10 @@ sendRequestVoteResponse(self) == /\ pc[self] = "sendRequestVoteResponse"
                                                  leader, nextIndex, matchIndex, 
                                                  commitIndex, fAdvCommitIdxCh, 
                                                  msg_, lastTermVar, logOK, 
-                                                 grant, isQuorum, allProcs_, 
-                                                 allProcsSize_, temp_i, isDone, 
-                                                 prevLogTerm, newCommitIndex, 
-                                                 maxAgreeIndex, msg, allProcs, 
-                                                 allProcsSize, timeoutMsg >>
+                                                 grant, isQuorum, temp_i, 
+                                                 isDone, prevLogTerm, 
+                                                 newCommitIndex, maxAgreeIndex, 
+                                                 msg, timeoutMsg >>
 
 writeVotedFor(self) == /\ pc[self] = "writeVotedFor"
                        /\ votedFor' = [votedFor EXCEPT ![self] = msg_[self].msource]
@@ -716,33 +676,42 @@ writeVotedFor(self) == /\ pc[self] = "writeVotedFor"
                                        votesGranted, leader, nextIndex, 
                                        matchIndex, commitIndex, 
                                        fAdvCommitIdxCh, msg_, lastTermVar, 
-                                       logOK, grant, isQuorum, allProcs_, 
-                                       allProcsSize_, temp_i, isDone, 
+                                       logOK, grant, isQuorum, temp_i, isDone, 
                                        prevLogTerm, newCommitIndex, 
-                                       maxAgreeIndex, msg, allProcs, 
-                                       allProcsSize, timeoutMsg >>
+                                       maxAgreeIndex, msg, timeoutMsg >>
 
-getRaftNodes1(self) == /\ pc[self] = "getRaftNodes1"
-                       /\ allProcs_' = [allProcs_ EXCEPT ![self] = {p \in allProcs_[self] : p < 100}]
-                       /\ allProcsSize_' = [allProcsSize_ EXCEPT ![self] = Cardinality(allProcs_'[self])]
-                       /\ isQuorum' = [isQuorum EXCEPT ![self] = Cardinality(votesGranted[self]) * 2 > allProcsSize_'[self]]
-                       /\ IF (role[self] = "candidate" /\ isQuorum'[self])
-                             THEN /\ pc' = [pc EXCEPT ![self] = "becomeLeader"]
-                             ELSE /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
-                       /\ UNCHANGED << queues, stateMachine, role, log, 
-                                       currentTerm, votedFor, votesResponded, 
-                                       votesGranted, leader, nextIndex, 
-                                       matchIndex, commitIndex, 
-                                       fAdvCommitIdxCh, msg_, lastTermVar, 
-                                       logOK, grant, temp_i, isDone, 
-                                       prevLogTerm, newCommitIndex, 
-                                       maxAgreeIndex, msg, allProcs, 
-                                       allProcsSize, timeoutMsg >>
+calculateQuorumHandleRequestVoteResponse(self) == /\ pc[self] = "calculateQuorumHandleRequestVoteResponse"
+                                                  /\ isQuorum' = [isQuorum EXCEPT ![self] = Cardinality(votesGranted[self]) * 2 > NumRaftNodes]
+                                                  /\ IF (role[self] = "candidate" /\ isQuorum'[self])
+                                                        THEN /\ pc' = [pc EXCEPT ![self] = "becomeLeader"]
+                                                        ELSE /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
+                                                  /\ UNCHANGED << queues, 
+                                                                  stateMachine, 
+                                                                  role, log, 
+                                                                  currentTerm, 
+                                                                  votedFor, 
+                                                                  votesResponded, 
+                                                                  votesGranted, 
+                                                                  leader, 
+                                                                  nextIndex, 
+                                                                  matchIndex, 
+                                                                  commitIndex, 
+                                                                  fAdvCommitIdxCh, 
+                                                                  msg_, 
+                                                                  lastTermVar, 
+                                                                  logOK, grant, 
+                                                                  temp_i, 
+                                                                  isDone, 
+                                                                  prevLogTerm, 
+                                                                  newCommitIndex, 
+                                                                  maxAgreeIndex, 
+                                                                  msg, 
+                                                                  timeoutMsg >>
 
 becomeLeader(self) == /\ pc[self] = "becomeLeader"
                       /\ role' = [role EXCEPT ![self] = "leader"]
-                      /\ nextIndex' = [nextIndex EXCEPT ![self] = [j \in allProcs_[self] |-> Len(log[self]) + 1]]
-                      /\ matchIndex' = [matchIndex EXCEPT ![self] = [j \in allProcs_[self] |-> 0]]
+                      /\ nextIndex' = [nextIndex EXCEPT ![self] = [j \in ServerSet |-> Len(log[self]) + 1]]
+                      /\ matchIndex' = [matchIndex EXCEPT ![self] = [j \in ServerSet |-> 0]]
                       /\ leader' = [leader EXCEPT ![self] = self]
                       /\ PrintT(<<"BecomeLeader", ToString(self)>>)
                       /\ pc' = [pc EXCEPT ![self] = "leaderElectionLoop"]
@@ -750,10 +719,9 @@ becomeLeader(self) == /\ pc[self] = "becomeLeader"
                                       votedFor, votesResponded, votesGranted, 
                                       commitIndex, fAdvCommitIdxCh, msg_, 
                                       lastTermVar, logOK, grant, isQuorum, 
-                                      allProcs_, allProcsSize_, temp_i, isDone, 
-                                      prevLogTerm, newCommitIndex, 
-                                      maxAgreeIndex, msg, allProcs, 
-                                      allProcsSize, timeoutMsg >>
+                                      temp_i, isDone, prevLogTerm, 
+                                      newCommitIndex, maxAgreeIndex, msg, 
+                                      timeoutMsg >>
 
 returnToFollowerHandleAppendEntriesRequest(self) == /\ pc[self] = "returnToFollowerHandleAppendEntriesRequest"
                                                     /\ IF (msg_[self].mterm = currentTerm[self] /\ role[self] = "candidate")
@@ -765,10 +733,10 @@ returnToFollowerHandleAppendEntriesRequest(self) == /\ pc[self] = "returnToFollo
                                                                /\ UNCHANGED << log, 
                                                                                fAdvCommitIdxCh >>
                                                           ELSE /\ Assert(msg_[self].mterm = currentTerm[self] /\ role'[self] = "follower" /\ logOK[self], 
-                                                                         "Failure of assertion at line 223, column 21.")
+                                                                         "Failure of assertion at line 215, column 21.")
                                                                /\ log' = [log EXCEPT ![self] = SubSeq(log[self], 1, msg_[self].mprevLogIndex) \o msg_[self].mentries]
                                                                /\ Assert(msg_[self].mcommitIndex <= Len(log'[self]), 
-                                                                         "Failure of assertion at line 226, column 21.")
+                                                                         "Failure of assertion at line 218, column 21.")
                                                                /\ fAdvCommitIdxCh' = [fAdvCommitIdxCh EXCEPT ![self] = msg_[self]]
                                                                /\ pc' = [pc EXCEPT ![self] = "advanceCommitIndexFollower"]
                                                     /\ UNCHANGED << queues, 
@@ -786,16 +754,12 @@ returnToFollowerHandleAppendEntriesRequest(self) == /\ pc[self] = "returnToFollo
                                                                     logOK, 
                                                                     grant, 
                                                                     isQuorum, 
-                                                                    allProcs_, 
-                                                                    allProcsSize_, 
                                                                     temp_i, 
                                                                     isDone, 
                                                                     prevLogTerm, 
                                                                     newCommitIndex, 
                                                                     maxAgreeIndex, 
                                                                     msg, 
-                                                                    allProcs, 
-                                                                    allProcsSize, 
                                                                     timeoutMsg >>
 
 sendAppendEntriesResponseReject(self) == /\ pc[self] = "sendAppendEntriesResponseReject"
@@ -813,13 +777,10 @@ sendAppendEntriesResponseReject(self) == /\ pc[self] = "sendAppendEntriesRespons
                                                          fAdvCommitIdxCh, msg_, 
                                                          lastTermVar, logOK, 
                                                          grant, isQuorum, 
-                                                         allProcs_, 
-                                                         allProcsSize_, temp_i, 
-                                                         isDone, prevLogTerm, 
+                                                         temp_i, isDone, 
+                                                         prevLogTerm, 
                                                          newCommitIndex, 
                                                          maxAgreeIndex, msg, 
-                                                         allProcs, 
-                                                         allProcsSize, 
                                                          timeoutMsg >>
 
 advanceCommitIndexFollower(self) == /\ pc[self] = "advanceCommitIndexFollower"
@@ -845,12 +806,10 @@ advanceCommitIndexFollower(self) == /\ pc[self] = "advanceCommitIndexFollower"
                                                     nextIndex, matchIndex, 
                                                     fAdvCommitIdxCh, msg_, 
                                                     lastTermVar, logOK, grant, 
-                                                    isQuorum, allProcs_, 
-                                                    allProcsSize_, temp_i, 
-                                                    isDone, prevLogTerm, 
+                                                    isQuorum, temp_i, isDone, 
+                                                    prevLogTerm, 
                                                     newCommitIndex, 
                                                     maxAgreeIndex, msg, 
-                                                    allProcs, allProcsSize, 
                                                     timeoutMsg >>
 
 setLeaderHandleAppendEntriesRequest(self) == /\ pc[self] = "setLeaderHandleAppendEntriesRequest"
@@ -869,58 +828,48 @@ setLeaderHandleAppendEntriesRequest(self) == /\ pc[self] = "setLeaderHandleAppen
                                                              fAdvCommitIdxCh, 
                                                              msg_, lastTermVar, 
                                                              logOK, grant, 
-                                                             isQuorum, 
-                                                             allProcs_, 
-                                                             allProcsSize_, 
-                                                             temp_i, isDone, 
+                                                             isQuorum, temp_i, 
+                                                             isDone, 
                                                              prevLogTerm, 
                                                              newCommitIndex, 
                                                              maxAgreeIndex, 
-                                                             msg, allProcs, 
-                                                             allProcsSize, 
-                                                             timeoutMsg >>
+                                                             msg, timeoutMsg >>
 
 findMaxAgreeIndex(self) == /\ pc[self] = "findMaxAgreeIndex"
                            /\ IF ((temp_i[self] > 0) /\ (~ isDone[self]))
-                                 THEN /\ allProcs_' = [allProcs_ EXCEPT ![self] = DOMAIN queues]
-                                      /\ pc' = [pc EXCEPT ![self] = "getRaftNodes2"]
+                                 THEN /\ pc' = [pc EXCEPT ![self] = "calculateQuorum"]
                                       /\ UNCHANGED newCommitIndex
                                  ELSE /\ IF (maxAgreeIndex[self] # 0 /\ log[self][maxAgreeIndex[self]].term = currentTerm[self])
                                             THEN /\ newCommitIndex' = [newCommitIndex EXCEPT ![self] = maxAgreeIndex[self]]
                                                  /\ Assert(newCommitIndex'[self] >= commitIndex[self], 
-                                                           "Failure of assertion at line 282, column 29.")
+                                                           "Failure of assertion at line 271, column 29.")
                                             ELSE /\ newCommitIndex' = [newCommitIndex EXCEPT ![self] = commitIndex[self]]
                                       /\ pc' = [pc EXCEPT ![self] = "advanceCommitIndexLeader"]
-                                      /\ UNCHANGED allProcs_
                            /\ UNCHANGED << queues, stateMachine, role, log, 
                                            currentTerm, votedFor, 
                                            votesResponded, votesGranted, 
                                            leader, nextIndex, matchIndex, 
                                            commitIndex, fAdvCommitIdxCh, msg_, 
                                            lastTermVar, logOK, grant, isQuorum, 
-                                           allProcsSize_, temp_i, isDone, 
-                                           prevLogTerm, maxAgreeIndex, msg, 
-                                           allProcs, allProcsSize, timeoutMsg >>
+                                           temp_i, isDone, prevLogTerm, 
+                                           maxAgreeIndex, msg, timeoutMsg >>
 
-getRaftNodes2(self) == /\ pc[self] = "getRaftNodes2"
-                       /\ allProcs_' = [allProcs_ EXCEPT ![self] = {p \in allProcs_[self] : p < 100}]
-                       /\ allProcsSize_' = [allProcsSize_ EXCEPT ![self] = Cardinality(allProcs_'[self])]
-                       /\ isQuorum' = [isQuorum EXCEPT ![self] = Cardinality(({self} \cup {k \in allProcs_'[self] : matchIndex[self][k] >= temp_i[self]})) * 2 > allProcsSize_'[self]]
-                       /\ IF (isQuorum'[self])
-                             THEN /\ maxAgreeIndex' = [maxAgreeIndex EXCEPT ![self] = temp_i[self]]
-                                  /\ isDone' = [isDone EXCEPT ![self] = TRUE]
-                             ELSE /\ TRUE
-                                  /\ UNCHANGED << isDone, maxAgreeIndex >>
-                       /\ temp_i' = [temp_i EXCEPT ![self] = temp_i[self] - 1]
-                       /\ pc' = [pc EXCEPT ![self] = "findMaxAgreeIndex"]
-                       /\ UNCHANGED << queues, stateMachine, role, log, 
-                                       currentTerm, votedFor, votesResponded, 
-                                       votesGranted, leader, nextIndex, 
-                                       matchIndex, commitIndex, 
-                                       fAdvCommitIdxCh, msg_, lastTermVar, 
-                                       logOK, grant, prevLogTerm, 
-                                       newCommitIndex, msg, allProcs, 
-                                       allProcsSize, timeoutMsg >>
+calculateQuorum(self) == /\ pc[self] = "calculateQuorum"
+                         /\ isQuorum' = [isQuorum EXCEPT ![self] = Cardinality(({self} \cup {k \in ServerSet : matchIndex[self][k] >= temp_i[self]})) * 2 > NumRaftNodes]
+                         /\ IF (isQuorum'[self])
+                               THEN /\ maxAgreeIndex' = [maxAgreeIndex EXCEPT ![self] = temp_i[self]]
+                                    /\ isDone' = [isDone EXCEPT ![self] = TRUE]
+                               ELSE /\ TRUE
+                                    /\ UNCHANGED << isDone, maxAgreeIndex >>
+                         /\ temp_i' = [temp_i EXCEPT ![self] = temp_i[self] - 1]
+                         /\ pc' = [pc EXCEPT ![self] = "findMaxAgreeIndex"]
+                         /\ UNCHANGED << queues, stateMachine, role, log, 
+                                         currentTerm, votedFor, votesResponded, 
+                                         votesGranted, leader, nextIndex, 
+                                         matchIndex, commitIndex, 
+                                         fAdvCommitIdxCh, msg_, lastTermVar, 
+                                         logOK, grant, prevLogTerm, 
+                                         newCommitIndex, msg, timeoutMsg >>
 
 advanceCommitIndexLeader(self) == /\ pc[self] = "advanceCommitIndexLeader"
                                   /\ IF (commitIndex[self] < newCommitIndex[self])
@@ -941,26 +890,11 @@ advanceCommitIndexLeader(self) == /\ pc[self] = "advanceCommitIndexLeader"
                                                   leader, nextIndex, 
                                                   matchIndex, fAdvCommitIdxCh, 
                                                   msg_, lastTermVar, logOK, 
-                                                  grant, isQuorum, allProcs_, 
-                                                  allProcsSize_, temp_i, 
+                                                  grant, isQuorum, temp_i, 
                                                   isDone, prevLogTerm, 
                                                   newCommitIndex, 
-                                                  maxAgreeIndex, msg, allProcs, 
-                                                  allProcsSize, timeoutMsg >>
-
-getRaftNodes3(self) == /\ pc[self] = "getRaftNodes3"
-                       /\ allProcs_' = [allProcs_ EXCEPT ![self] = {p \in allProcs_[self] : p < 100}]
-                       /\ allProcsSize_' = [allProcsSize_ EXCEPT ![self] = Cardinality(allProcs_'[self])]
-                       /\ pc' = [pc EXCEPT ![self] = "iterateOverProcesses"]
-                       /\ UNCHANGED << queues, stateMachine, role, log, 
-                                       currentTerm, votedFor, votesResponded, 
-                                       votesGranted, leader, nextIndex, 
-                                       matchIndex, commitIndex, 
-                                       fAdvCommitIdxCh, msg_, lastTermVar, 
-                                       logOK, grant, isQuorum, temp_i, isDone, 
-                                       prevLogTerm, newCommitIndex, 
-                                       maxAgreeIndex, msg, allProcs, 
-                                       allProcsSize, timeoutMsg >>
+                                                  maxAgreeIndex, msg, 
+                                                  timeoutMsg >>
 
 iterateOverProcesses(self) == /\ pc[self] = "iterateOverProcesses"
                               /\ temp_i' = [temp_i EXCEPT ![self] = 1]
@@ -971,14 +905,12 @@ iterateOverProcesses(self) == /\ pc[self] = "iterateOverProcesses"
                                               leader, nextIndex, matchIndex, 
                                               commitIndex, fAdvCommitIdxCh, 
                                               msg_, lastTermVar, logOK, grant, 
-                                              isQuorum, allProcs_, 
-                                              allProcsSize_, isDone, 
-                                              prevLogTerm, newCommitIndex, 
-                                              maxAgreeIndex, msg, allProcs, 
-                                              allProcsSize, timeoutMsg >>
+                                              isQuorum, isDone, prevLogTerm, 
+                                              newCommitIndex, maxAgreeIndex, 
+                                              msg, timeoutMsg >>
 
 assign_i(self) == /\ pc[self] = "assign_i"
-                  /\ IF (temp_i[self] <= allProcsSize_[self])
+                  /\ IF (temp_i[self] <= Cardinality(ServerSet))
                         THEN /\ IF (temp_i[self] # self)
                                    THEN /\ LET prevLogIndex == nextIndex[self][temp_i[self]] - 1 IN
                                              LET entries == SubSeq(log[self], nextIndex[self][temp_i[self]], Len(log[self])) IN
@@ -998,9 +930,8 @@ assign_i(self) == /\ pc[self] = "assign_i"
                                   votedFor, votesResponded, votesGranted, 
                                   leader, nextIndex, matchIndex, commitIndex, 
                                   fAdvCommitIdxCh, msg_, lastTermVar, logOK, 
-                                  grant, isQuorum, allProcs_, allProcsSize_, 
-                                  isDone, newCommitIndex, maxAgreeIndex, msg, 
-                                  allProcs, allProcsSize, timeoutMsg >>
+                                  grant, isQuorum, isDone, newCommitIndex, 
+                                  maxAgreeIndex, msg, timeoutMsg >>
 
 redirectProposeMessageToLeader(self) == /\ pc[self] = "redirectProposeMessageToLeader"
                                         /\ \/ /\ queues' = [queues EXCEPT ![leader[self]] =  Append(queues[leader[self]],    [mtype   |-> "ProposeMessage",mcmd    |-> msg_[self].mcmd,msource |-> self])]
@@ -1017,28 +948,26 @@ redirectProposeMessageToLeader(self) == /\ pc[self] = "redirectProposeMessageToL
                                                         fAdvCommitIdxCh, msg_, 
                                                         lastTermVar, logOK, 
                                                         grant, isQuorum, 
-                                                        allProcs_, 
-                                                        allProcsSize_, temp_i, 
-                                                        isDone, prevLogTerm, 
+                                                        temp_i, isDone, 
+                                                        prevLogTerm, 
                                                         newCommitIndex, 
                                                         maxAgreeIndex, msg, 
-                                                        allProcs, allProcsSize, 
                                                         timeoutMsg >>
 
-raftNode(self) == leaderElectionLoop(self) \/ getAllProcsSingleLeader(self)
+raftNode(self) == leaderElectionLoop(self) \/ checkCardinalityTimeout(self)
                      \/ becomeLeaderWhenAlone(self)
                      \/ broadcastRequestVoteRequest(self)
                      \/ sendRequestVoteResponse(self)
-                     \/ writeVotedFor(self) \/ getRaftNodes1(self)
+                     \/ writeVotedFor(self)
+                     \/ calculateQuorumHandleRequestVoteResponse(self)
                      \/ becomeLeader(self)
                      \/ returnToFollowerHandleAppendEntriesRequest(self)
                      \/ sendAppendEntriesResponseReject(self)
                      \/ advanceCommitIndexFollower(self)
                      \/ setLeaderHandleAppendEntriesRequest(self)
-                     \/ findMaxAgreeIndex(self) \/ getRaftNodes2(self)
+                     \/ findMaxAgreeIndex(self) \/ calculateQuorum(self)
                      \/ advanceCommitIndexLeader(self)
-                     \/ getRaftNodes3(self) \/ iterateOverProcesses(self)
-                     \/ assign_i(self)
+                     \/ iterateOverProcesses(self) \/ assign_i(self)
                      \/ redirectProposeMessageToLeader(self)
 
 propose(self) == /\ pc[self] = "propose"
@@ -1050,9 +979,8 @@ propose(self) == /\ pc[self] = "propose"
                                  votedFor, votesResponded, votesGranted, 
                                  leader, nextIndex, matchIndex, commitIndex, 
                                  fAdvCommitIdxCh, msg_, lastTermVar, logOK, 
-                                 grant, isQuorum, allProcs_, allProcsSize_, 
-                                 temp_i, isDone, prevLogTerm, newCommitIndex, 
-                                 maxAgreeIndex, msg, allProcs, allProcsSize, 
+                                 grant, isQuorum, temp_i, isDone, prevLogTerm, 
+                                 newCommitIndex, maxAgreeIndex, msg, 
                                  timeoutMsg >>
 
 client(self) == propose(self)
@@ -1060,22 +988,18 @@ client(self) == propose(self)
 sendTimeout(self) == /\ pc[self] = "sendTimeout"
                      /\ \/ /\ FALSE
                         \/ /\ TRUE
-                     /\ allProcs' = [allProcs EXCEPT ![self] = DOMAIN queues]
                      /\ pc' = [pc EXCEPT ![self] = "getRaftNodes4"]
                      /\ UNCHANGED << queues, stateMachine, role, log, 
                                      currentTerm, votedFor, votesResponded, 
                                      votesGranted, leader, nextIndex, 
                                      matchIndex, commitIndex, fAdvCommitIdxCh, 
                                      msg_, lastTermVar, logOK, grant, isQuorum, 
-                                     allProcs_, allProcsSize_, temp_i, isDone, 
-                                     prevLogTerm, newCommitIndex, 
-                                     maxAgreeIndex, msg, allProcsSize, 
+                                     temp_i, isDone, prevLogTerm, 
+                                     newCommitIndex, maxAgreeIndex, msg, 
                                      timeoutMsg >>
 
 getRaftNodes4(self) == /\ pc[self] = "getRaftNodes4"
-                       /\ allProcs' = [allProcs EXCEPT ![self] = {p \in allProcs[self] : p < 100}]
-                       /\ allProcsSize' = [allProcsSize EXCEPT ![self] = Cardinality(allProcs'[self])]
-                       /\ \/ /\ queues' = [queues EXCEPT ![(self % allProcsSize'[self]) + 1] =  Append(queues[(self % allProcsSize'[self]) + 1], timeoutMsg[self])]
+                       /\ \/ /\ queues' = [queues EXCEPT ![(((self - 1) % Cardinality(ServerSet)) + 1)] =  Append(queues[(((self - 1) % Cardinality(ServerSet)) + 1)], timeoutMsg[self])]
                           \/ /\ TRUE
                              /\ UNCHANGED queues
                        /\ pc' = [pc EXCEPT ![self] = "Done"]
@@ -1084,9 +1008,9 @@ getRaftNodes4(self) == /\ pc[self] = "getRaftNodes4"
                                        leader, nextIndex, matchIndex, 
                                        commitIndex, fAdvCommitIdxCh, msg_, 
                                        lastTermVar, logOK, grant, isQuorum, 
-                                       allProcs_, allProcsSize_, temp_i, 
-                                       isDone, prevLogTerm, newCommitIndex, 
-                                       maxAgreeIndex, msg, timeoutMsg >>
+                                       temp_i, isDone, prevLogTerm, 
+                                       newCommitIndex, maxAgreeIndex, msg, 
+                                       timeoutMsg >>
 
 timeouter(self) == sendTimeout(self) \/ getRaftNodes4(self)
 

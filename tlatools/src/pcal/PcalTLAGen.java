@@ -845,8 +845,6 @@ public class PcalTLAGen
             GenSendCall((AST.SendCall) ast, c, context, prefix, col);
         else if (ast.getClass().equals(AST.ReceiveCallObj.getClass()))
             GenReceiveCall((AST.ReceiveCall) ast, c, context, prefix, col);
-        else if (ast.getClass().equals(AST.GetAllProcsCallObj.getClass()))
-            GenGetAllProcsCall((AST.GetAllProcsCall) ast, c, context, prefix, col);
         else if (ast.getClass().equals(AST.FailObj.getClass()))
             GenFail((AST.Fail) ast, c, context, prefix, col);
         else if (ast.getClass().equals(AST.MaybeFailObj.getClass()))
@@ -4397,16 +4395,6 @@ public class PcalTLAGen
 
     private void GenReceiveCall(AST.ReceiveCall ast, Changed c, String context, String prefix, int col) throws PcalTLAGenException {
         Vector stmts = ast.GetReceiveStmts();
-
-        for (int i = 0; i <= stmts.size() - 1; i++) {
-            GenStmt((AST) stmts.elementAt(i), c, context, prefix, col);
-        }
-
-        endCurrentLineOfTLA();
-    }
-
-    private void GenGetAllProcsCall(AST.GetAllProcsCall ast, Changed c, String context, String prefix, int col) throws PcalTLAGenException {
-        Vector stmts = ast.getStmts();
 
         for (int i = 0; i <= stmts.size() - 1; i++) {
             GenStmt((AST) stmts.elementAt(i), c, context, prefix, col);

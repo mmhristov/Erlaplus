@@ -500,8 +500,6 @@ public class PcalSymTab {
             ExtractSendCall((AST.SendCall) ast, context, cType);
         else if (ast.getClass().equals(AST.ReceiveCallObj.getClass()))
              ExtractReceiveCall((AST.ReceiveCall) ast, context, cType);
-        else if (ast.getClass().equals(AST.GetAllProcsCallObj.getClass()))
-            ExtractGetAllProcsCall((AST.GetAllProcsCall) ast, context, cType);
         else if (ast.getClass().equals(AST.FailObj.getClass()))
             ExtractFail((AST.Fail) ast, context, cType);
         else if (ast.getClass().equals(AST.MaybeFailObj.getClass()))
@@ -717,9 +715,6 @@ public class PcalSymTab {
     }
 
     private void ExtractSendCall(AST.SendCall ast, String context, String cType) {
-    }
-
-    private void ExtractGetAllProcsCall(AST.GetAllProcsCall ast, String context, String cType) {
     }
 
     private void ExtractFail(AST.Fail ast, String context, String cType) {

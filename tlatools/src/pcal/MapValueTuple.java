@@ -6,11 +6,11 @@ public class MapValueTuple {
 
     public int priority;
 
-    public boolean isFunction;
+    public boolean isUnary;
 
-    public MapValueTuple(String string, int Priority, boolean isFunction) {
+    public MapValueTuple(String string, int Priority, boolean isUnary) {
         this.string = string;
         this.priority = Priority;
-        this.isFunction = isFunction;
+        this.isUnary = isUnary;
     }
 }

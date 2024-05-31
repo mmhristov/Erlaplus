@@ -36,7 +36,7 @@ public class PcalErlangGen {
     /**
      * The position of the end of the last function declared.
      */
-    private int endOfFunctionPos;
+    private int endOfFunctionPos; // todo: understand what the intention behind this was and probably use endOfModuleAttributesPos instead
 
     /**
      * The current position of writing
@@ -49,13 +49,18 @@ public class PcalErlangGen {
     private TLAExprToErlangStrConverter exprConverter;
 
     /**
+     * A mapping of PlusCal constant names and Erlang constant names.
+     */
+    private final Map<String, String> allConstantVarNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+
+    /**
      * Generates the Erlang translation.
      *
      * @param ast The AST produced by parsing and exploding.
      * @return The generated Erlang program as a vector of strings.
      */
     // use symbol table if you need to look up any identifier
-    public Vector<String> generate(AST ast) throws PcalErlangGenException {
+    public PcalErlangGenResult generate(AST ast, PcalSymTab symTab) throws PcalErlangGenException {
         // init expression converter
         exprConverter = new TLAExprToErlangStrConverter();
 
@@ -65,18 +70,108 @@ public class PcalErlangGen {
             GenUniprocess((AST.Uniprocess) ast);
         else if (ast.getClass().equals(AST.MultiprocessObj.getClass()))
             GenMultiprocess((AST.Multiprocess) ast);
+        else
+            throw new PcalErlangGenException("Unknown root AST type: " + ast.getClass());
 
-        return erlangCode;
+        // get definitions
+        TLAExpr defs = ((AST.RootProcess) ast).defs;
+
+        Map<String, String> parsedDefinitions = null;
+        // parse definitions
+        if (defs != null) {
+            parsedDefinitions = parseDefinitions(defs);
+        }
+
+        generateConstantDeclarations(parsedDefinitions);
+
+        if (PcalParams.GenErlangMainFunction) {
+            generateMain(ast, ((AST.RootProcess) ast).getAllProcessNames(), symTab);
+        }
+
+        return new PcalErlangGenResult(erlangCode);
+    }
+
+    private void generateMain(AST ast, List<String> allProcessNames, PcalSymTab symTab) throws PcalErlangGenException {
+        String initFuncName = "init";
+        addOneErlangLine(initFuncName + "() -> ");
+        indent++;
+
+        boolean isUniProcess = ast.getClass().equals(AST.UniprocessObj.getClass());
+
+        int eqCount = 0;
+        for (int i = 0; i < allProcessNames.size(); i++) {
+            String processName = allProcessNames.get(i);
+            String functionName = getProcessStartFunctionName(ErlangProcessContext.createProcessName(processName));
+            String line;
+            if (isUniProcess) {
+                line = functionName + "(" + eqCount + ")";
+            } else {
+                int index = symTab.FindProcess(processName);
+                if (index >= symTab.processes.size()) {
+                    throw new PcalErlangGenException(
+                            "Process with name \"" + processName + "\" could not be found in the symbol table."
+                    );
+                }
+                PcalSymTab.ProcessEntry processEntry = (PcalSymTab.ProcessEntry) symTab.processes.get(index);
+
+                if (processEntry.isEq) {
+                    line = functionName + "(" + eqCount + ")";
+                    eqCount++;
+                } else {
+                    String ids = exprConverter.TLAExprToErlangStr(processEntry.id, new ErlangDefinitionContext("", allConstantVarNames));
+                    line = String.format(START_FUNC_INIT_PROCESS_SET, functionName, ids);
+                }
+            }
+            if (i != allProcessNames.size() - 1) {
+                line += ",";
+            } else {
+                line += ".";
+            }
+            addOneErlangLine(line);
+        }
+        addFuncToExports(initFuncName, 0);
+        indent--;
+        addOneErlangLine("");
+
+        String runFuncName = "run";
+        addOneErlangLine(runFuncName + "() -> ");
+        indent++;
+        addOneErlangLine(String.format(BROADCAST_STATEMENT, "'go'") + ".");
+        indent--;
+        addFuncToExports(runFuncName, 0);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> parseDefinitions(TLAExpr defs) throws PcalErlangGenException {
+        /*
+         * Contains all definitions. It is a mapping of PlusCal identifiers to translated Erlang values
+         */
+        Map<String, String> definitions = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+
+        ErlangDefinitionContext context = new ErlangDefinitionContext("", allConstantVarNames);
+        for (Object defObj : defs.tokens) {
+            Vector<TLAToken> def = (Vector<TLAToken>) defObj;
+            // parse definition
+            Map.Entry<String, String> defErlang = this.exprConverter.parseDefinition(def, context);
+            String pcalName = defErlang.getKey();
+            definitions.put(pcalName, defErlang.getValue());
+        }
+        // add all to global constant map
+        allConstantVarNames.putAll(context.getConstantNamesMap());
+        return definitions;
     }
 
     private void addInitialization() {
-        // add module, imports, export functions etc.
+        // add module, imports, export functions, macros etc.
         String moduleName = getErlangModuleName(PcalParams.TLAInputFile);
         addOneErlangLine(String.format(MODULE_DECL, moduleName) + ".");
         addOneErlangLine(EXPORT_DECL + ".");
         exportedFuncsPos = erlangCode.size() - 1; // save index of exports
-        updateEndOfModuleAttributePos( exportedFuncsPos);
+        addOneErlangLine(String.format(MACRO_DEFINITION, IS_TEST, "false"));
+
+        updateEndOfModuleAttributePos(erlangCode.size() - 1);
         endOfFunctionPos = endOfModuleAttributesPos + 2;
+
         addOneErlangLine(""); // empty line
     }
 
@@ -96,13 +191,8 @@ public class PcalErlangGen {
           Create process context
          */
 
-        ProcessContext context = new ProcessContext(name, varDecls);
+        ErlangProcessContext context = new ErlangProcessContext(name, varDecls);
 
-        /*
-          Generate state (record)
-         */
-
-        GenProcessState(context, varDecls);
         // add function for process
         String processFuncName = context.getProcessName();
         String firstStateVarName = context.getCurrentStateVarName();
@@ -112,47 +202,79 @@ public class PcalErlangGen {
 
         /*
           Add registration of process as first statement of body:
-           erla_libs:register_proc(State0#state_Server.proc_Num)
+           erla_libs:register_proc(State0#state_Server.proc_ID)
          */
         addOneErlangLine(String.format(SINGLE_LINE_COMMENT, "Register process globally"));
-        String procNumStr = context.getProcNumberFieldAccess();
-        addOneErlangLine(String.format(REGISTER_STATEMENT, procNumStr) + ",");
+        String selfStr = context.getErlangVarStr("self");
+        addOneErlangLine(String.format(REGISTER_STATEMENT, selfStr) + ",");
         addOneErlangLine("");
 
+        if (PcalParams.GenErlangMainFunction) {
+            /*
+                Add 'receive' block for waiting before all processes are registered
+            */
+            addOneErlangLine(String.format(SINGLE_LINE_COMMENT, "Wait for 'go' message"));
+            addOneErlangLine("receive");
+            indent++;
+            addOneErlangLine("go -> ok");
+            indent--;
+            addOneErlangLine("end,");
+            addOneErlangLine("");
+        }
+
         /*
-          Generate body
+            Generate body
          */
 
+        addOneErlangLine(String.format(SINGLE_LINE_COMMENT, "Body"));
         GenLabeledBody(body, context);
 
         EndBody();
 
         indent = 0; // reset indent level
 
+        /*
+          Generate state
+
+            Note: we generate the state after the body so that we have discovered all constants.
+         */
+
+        GenProcessState(context, varDecls);
+
+        /*
+            Export function
+         */
+
         addFuncToExports(processFuncName, 1);
 
         /*
           Generate initialization function
          */
-        GenProcessStartFunction(processFuncName, context);
+        GenProcessStartFunction(context);
+
+        /*
+            Add constants to global set
+         */
+
+        allConstantVarNames.putAll(context.getConstantNamesMap());
     }
 
 
 
-    private void GenProcessStartFunction(String processFuncName, ProcessContext context) {
-        String procStartFuncName = PREFIX_PROCESS_START_FUNC + processFuncName;
-        String argumentStr = "Name";
+    private void GenProcessStartFunction(ErlangProcessContext context) throws PcalErlangGenException {
+        String procStartFuncName = getProcessStartFunctionName(context.getProcessName());
+        String argumentStr = "Id";
         addOneErlangLine(procStartFuncName + "(" + argumentStr + ") ->");
         indent++;
 
         /*
           Add spawn link line:
-           spawn_link(?MODULE, process_myName, [#state_myName{proc_Num = Name}])
+           spawn_link(?MODULE, process_myName, [#state_myName{proc_ID = Id}])
          */
 
         String processNameWithPrefix = context.getProcessName();
         String procRecordName = "#" + context.getStateRecordName();
-        String initRecordStr = procRecordName + "{" + context.getProcNumberFieldStr() + " = " + argumentStr + "}";
+        String initRecordStr = procRecordName + "{" + context.getFieldName("self") + " = " + argumentStr + "}";
         String spawnLinkLine = "spawn_link(?MODULE, " + processNameWithPrefix + ", " + "[" + initRecordStr + "]).";
 
         addOneErlangLine(spawnLinkLine);
@@ -172,7 +294,7 @@ public class PcalErlangGen {
      * @param context  the context of the process.
      * @param varDecls the variable declarations of the current process
      */
-    private void GenProcessState(ProcessContext context, Vector varDecls) throws PcalErlangGenException {
+    private void GenProcessState(ErlangProcessContext context, Vector varDecls) throws PcalErlangGenException {
         // generate record
         Vector<String> recordVec = new Vector<>();
         String recordName = context.getStateRecordName();
@@ -180,12 +302,14 @@ public class PcalErlangGen {
         indent++;
 
         // fill with fields that are common for all processes
-        String numLine = formatLineForIndent(context.getProcNumberFieldStr() + " = " + "-1", indent);
+        String numLine = formatLineForIndent(context.getFieldName("self") + " = " + "-1", indent);
+
         if (!varDecls.isEmpty()) {
             numLine += ",";
         }
         recordVec.addElement(numLine);
-        // fill with variables
+
+        // fill with variable declarations
         if (!varDecls.isEmpty()) {
             context.beginVarDeclScope();
             for (int i = 0; i <= varDecls.size() - 1; i++) {
@@ -193,7 +317,7 @@ public class PcalErlangGen {
                 String varName = context.getFieldName(varDecl.var); // get erlang var name
                 String value;
                 if (isFunction(varDecl)){
-                    value = GenFunction(varDecl,context);
+                    value = GenFunction(varDecl,context); // todo: probably obsolete, remove when functions are implemented
                 } else {
                     value = TLAExprToErlangStr(varDecl.val, context);
                 }
@@ -221,7 +345,7 @@ public class PcalErlangGen {
         return false; // disable function translation
     }
 
-    private String GenFunction(AST.VarDecl varDecl, ProcessContext context) throws PcalErlangGenException {
+    private String GenFunction(AST.VarDecl varDecl, ErlangProcessContext context) throws PcalErlangGenException {
         Vector<TLAToken> tokens = (Vector<TLAToken>) varDecl.val.tokens.get(0);
         tokens.remove(0);
         tokens.remove(tokens.size()-1);
@@ -257,7 +381,7 @@ public class PcalErlangGen {
             listOfVars.add(tok.get(0).string);
         }
 
-        FunctionContext funContext = new FunctionContext(context,listOfVars);
+        ErlangFunctionContext funContext = new ErlangFunctionContext(context,listOfVars);
         List<String> translatedSets = new ArrayList<>();
         for (List<TLAToken> set : separatedSets) {
             Vector vec = new Vector<>(set);
@@ -317,7 +441,7 @@ public class PcalErlangGen {
     }
 
 
-    private void GenBody(Vector body, ProcessContext context) throws PcalErlangGenException {
+    private void GenBody(Vector body, ErlangProcessContext context) throws PcalErlangGenException {
         for (int i = 0; i < body.size(); i++) {
             AST stmt = (AST) body.elementAt(i);
             if (stmt.getClass().equals(AST.ReceiveCallObj.getClass())) {
@@ -329,7 +453,7 @@ public class PcalErlangGen {
         }
     }
 
-    private void GenLabeledBody(Vector body, ProcessContext context) throws PcalErlangGenException {
+    private void GenLabeledBody(Vector body, ErlangProcessContext context) throws PcalErlangGenException {
         // add all statements in one vector
         Vector allStmts = new Vector();
         for (int i = 0; i < body.size(); i++) {
@@ -382,7 +506,7 @@ public class PcalErlangGen {
         }
     }
 
-    private void GenStmt(AST ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenStmt(AST ast, ErlangProcessContext context) throws PcalErlangGenException {
         if (ast.getClass().equals(AST.AssignObj.getClass()))
             GenAssign((AST.Assign) ast, context);
         else if (ast.getClass().equals(AST.IfObj.getClass()))
@@ -407,8 +531,6 @@ public class PcalErlangGen {
             GenSendCall((AST.SendCall) ast, context);
         else if (ast.getClass().equals(AST.ReceiveCallObj.getClass()))
             throw new PcalErlangGenException("Receive reached in GenStmt!");
-        else if (ast.getClass().equals(AST.GetAllProcsCallObj.getClass()))
-            GenGetAllProcsCall((AST.GetAllProcsCall) ast, context);
         else if (ast.getClass().equals(AST.FailObj.getClass()))
             GenFail((AST.Fail) ast, context);
         else if (ast.getClass().equals(AST.MaybeFailObj.getClass()))
@@ -417,7 +539,7 @@ public class PcalErlangGen {
             PcalDebug.ReportBug("Unexpected AST type " + ast);
     }
 
-    private void GenLabelIf(AST.LabelIf ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenLabelIf(AST.LabelIf ast, ErlangProcessContext context) throws PcalErlangGenException {
         Vector<AST> allThenStmts = new Vector<AST>(ast.unlabThen);
         Vector<AST> allElseStmts = new Vector<AST>(ast.unlabElse);
 
@@ -432,8 +554,8 @@ public class PcalErlangGen {
         GenGeneralIf(ast.test, allThenStmts, allElseStmts, context);
     }
 
-    private void GenGeneralIf(TLAExpr test, Vector<AST> thenStmts, Vector<AST> elseStmts, ProcessContext context) throws PcalErlangGenException {
-        ProcessContext elseContext = new ProcessContext(context, false);
+    private void GenGeneralIf(TLAExpr test, Vector<AST> thenStmts, Vector<AST> elseStmts, ErlangProcessContext context) throws PcalErlangGenException {
+        ErlangProcessContext elseContext = new ErlangProcessContext(context, false);
         String originalStateVarName = context.getCurrentStateVarName();
         String condExpr = TLAExprToErlangStr(test, context);
         String caseLine = "case " + condExpr + " of";
@@ -505,7 +627,7 @@ public class PcalErlangGen {
         addOneErlangLine(endLine);
     }
 
-    private void GenWhile(AST.While ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenWhile(AST.While ast, ErlangProcessContext context) throws PcalErlangGenException {
         /*
           Inline code
          */
@@ -523,7 +645,7 @@ public class PcalErlangGen {
 
         currentPos = endOfFunctionPos;
         // to have the states inside the while function be independent
-        ProcessContext whileContext = new ProcessContext(context, true);
+        ErlangProcessContext whileContext = new ErlangProcessContext(context, true);
         indent = 0;
 
         addOneErlangLine("");
@@ -564,7 +686,7 @@ public class PcalErlangGen {
         indent = savedIndent;
     }
 
-    private void GenSkip(AST.Skip ast, ProcessContext context) {
+    private void GenSkip(AST.Skip ast, ErlangProcessContext context) {
         /*
           Generate a comment so that the user (and we, too) is not perplexed by a missing statement.
           Todo: improve EndBody to put the full-stop at the end of a comment (possibly a new line).
@@ -573,7 +695,7 @@ public class PcalErlangGen {
         addOneErlangLine(line);
     }
 
-    private void GenAssert(AST.Assert ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenAssert(AST.Assert ast, ErlangProcessContext context) throws PcalErlangGenException {
         // import module if it was not already
         if (!isModuleImported()) {
             importErlangModule();
@@ -584,17 +706,17 @@ public class PcalErlangGen {
         addOneErlangLine(assertLine);
     }
 
-    private void GenPrintS(AST.PrintS sPrint, ProcessContext context) throws PcalErlangGenException {
+    private void GenPrintS(AST.PrintS sPrint, ErlangProcessContext context) throws PcalErlangGenException {
         String sExpr = TLAExprToErlangStr(sPrint.exp, context);
         String line = String.format(PRINT_STATEMENT, sExpr) + ",";
         addOneErlangLine(line);
     }
 
-    private void GenWhen(AST.When ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenWhen(AST.When ast, ErlangProcessContext context) throws PcalErlangGenException {
         throw new PcalErlangGenException("Not implemented", ast);
     }
 
-    private void GenWith(AST.With ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenWith(AST.With ast, ErlangProcessContext context) throws PcalErlangGenException {
         if (!ast.isEq) {
             throw new PcalErlangGenException("Translation of \\in assignments is not implemented yet", ast);
         }
@@ -609,22 +731,22 @@ public class PcalErlangGen {
         context.removeTemporaryVar(ast.var);
     }
 
-    private void GenEither(AST.Either ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenEither(AST.Either ast, ErlangProcessContext context) throws PcalErlangGenException {
         throw new PcalErlangGenException("Not implemented", ast);
     }
 
-    private void GenIf(AST.If ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenIf(AST.If ast, ErlangProcessContext context) throws PcalErlangGenException {
         GenGeneralIf(ast.test, ast.Then, ast.Else,context);
     }
 
-    private void GenAssign(AST.Assign ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenAssign(AST.Assign ast, ErlangProcessContext context) throws PcalErlangGenException {
         for (int i = 0; i < ast.ass.size(); i++) {
             AST.SingleAssign sAssign = (AST.SingleAssign) ast.ass.elementAt(i);
             GenSingleAssign(sAssign, context);
         }
     }
 
-    private void GenSingleAssign(AST.SingleAssign sAssign, ProcessContext context) throws PcalErlangGenException {
+    private void GenSingleAssign(AST.SingleAssign sAssign, ErlangProcessContext context) throws PcalErlangGenException {
         // add to code
         addOneErlangLine(exprConverter.parseAssignment(sAssign.lhs, sAssign.rhs, context));
     }
@@ -636,7 +758,7 @@ public class PcalErlangGen {
      * @param followingStmts All statements that follow the receive operation
      * @param context The process' context
      */
-    private void GenReceiveCall(AST.ReceiveCall ast, List<AST> followingStmts, ProcessContext context) throws PcalErlangGenException {
+    private void GenReceiveCall(AST.ReceiveCall ast, List<AST> followingStmts, ErlangProcessContext context) throws PcalErlangGenException {
         /*
           Get all info
          */
@@ -674,7 +796,7 @@ public class PcalErlangGen {
         addOneErlangLine(endReceiveLine);
     }
 
-    private void GenSendCall(AST.SendCall ast, ProcessContext context) throws PcalErlangGenException {
+    private void GenSendCall(AST.SendCall ast, ErlangProcessContext context) throws PcalErlangGenException {
         /*
           Translate Send(message, receiver);
          */
@@ -694,16 +816,11 @@ public class PcalErlangGen {
         addOneErlangLine(sendLine);
     }
 
-    private void GenGetAllProcsCall(AST.GetAllProcsCall ast, ProcessContext context) throws PcalErlangGenException {
-        String line = exprConverter.parseGetAllProcsCall(ast.targetVarName, context);
-        addOneErlangLine(line);
-    }
-
-    private void GenMaybeFail(AST.MaybeFail ast, ProcessContext context) {
+    private void GenMaybeFail(AST.MaybeFail ast, ErlangProcessContext context) {
         addOneErlangLine("% maybeFail");
     }
 
-    private void GenFail(AST.Fail ast, ProcessContext context) {
+    private void GenFail(AST.Fail ast, ErlangProcessContext context) {
         // todo: change this to behave like the PlusCal primitive, i.e. stay in a non-terminating loop
         addOneErlangLine("% fail");
     }
@@ -774,7 +891,7 @@ public class PcalErlangGen {
         return domain.lastIndexOf(formatLineForIndent(line, indent));
     }
 
-    private String TLAExprToErlangStr(TLAExpr expr, ProcessContext context) throws PcalErlangGenException {
+    private String TLAExprToErlangStr(TLAExpr expr, ErlangProcessContext context) throws PcalErlangGenException {
         return exprConverter.TLAExprToErlangStr(expr, context);
     }
 
@@ -806,20 +923,20 @@ public class PcalErlangGen {
     }
 
     /**
-     * Creates an erlang file name given a PlusCal specification file name.
+     * Gets the erlang file name.
      *
-     * @param pcalFileName The file name of the PlusCal program.
-     * @return The erlang file name.
+     * @return The erlang file name (without extension).
      */
-    public static String getErlangFileName(String pcalFileName) {
+    public static String getErlangFileName() { // todo: find a way to do the file name creation only once
+        String pcalFileName = PcalParams.TLAInputFile;
         int firstLetter = pcalFileName.lastIndexOf(File.separator) + 1;
         // make first letter of the module name lowercase
         char[] c = pcalFileName.toCharArray();
         c[firstLetter] = Character.toLowerCase(c[firstLetter]);
-        return new String(c) + ".erl";
+        return new String(c);
     }
 
-    public static String getErlangModuleName(String pcalFileName) {
+    private static String getErlangModuleName(String pcalFileName) {
         // get module name
         String moduleName = pcalFileName.substring(pcalFileName.lastIndexOf(File.separator) + 1);
 
@@ -837,7 +954,7 @@ public class PcalErlangGen {
      *  Always use this to update endOfModuleAttributePos.
      * @param newPos The new position of the end of the module attributes
      */
-    private void updateEndOfModuleAttributePos( int newPos){
+    private void updateEndOfModuleAttributePos(int newPos){
         int diff = newPos - endOfModuleAttributesPos;
         endOfModuleAttributesPos = newPos;
         endOfFunctionPos += diff;
@@ -845,6 +962,37 @@ public class PcalErlangGen {
 
     private String getErlangNullStmt() {
         return "ok;";
+    }
+
+    private void generateConstantDeclarations(Map<String, String> parsedDefinitions) {
+        // add constants
+        for (Map.Entry<String, String> constant : allConstantVarNames.entrySet()) {
+            if (parsedDefinitions.containsKey(constant.getKey())) {
+                addDefinition(constant.getValue(), parsedDefinitions.get(constant.getKey()));
+            } else {
+                addConstant(constant.getValue());
+            }
+        }
+    }
+
+    private void addDefinition(String constant, String initValue) {
+        addConstant(constant, initValue);
+    }
+
+    private void addConstant(String constant, String initValue) {
+        insertErlangLineAtIndex(
+                endOfModuleAttributesPos,
+                String.format(MACRO_DEFINITION, constant, initValue), indent
+        );
+        updateEndOfModuleAttributePos(endOfModuleAttributesPos + 1);
+    }
+
+    private void addConstant(String constant) {
+        addConstant(constant, MACRO_INIT_VALUE);
+    }
+
+    private String getProcessStartFunctionName(String processName) {
+        return PREFIX_PROCESS_START_FUNC + processName;
     }
 
 }

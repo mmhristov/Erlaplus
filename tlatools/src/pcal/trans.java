@@ -461,12 +461,12 @@ class trans {
         
         PcalDebug.reportInfo("New file " + PcalParams.TLAInputFile + TLAConstants.Files.TLA_EXTENSION + " written.");
 
-        List<String> erlaLibsNames = PcalErlangGen.getErlaLibsModuleNames();
-        for(String erlaLibsName : erlaLibsNames) {
-            if (PcalParams.TranslateErlang) {
+        if (PcalParams.TranslateErlang) {
+            List<String> erlaLibsNames = PcalErlangGen.getErlaLibsModuleNames();
+            for(String erlaLibsName : erlaLibsNames) {
                 try {
                     String erlaLibsFileName = erlaLibsName + ".erl";
-                    Path parentPath =  Paths.get(PcalParams.TLAInputFile).getParent();
+                    Path parentPath = Paths.get(PcalParams.TLAInputFile).getParent();
                     String parentName;
                     if (parentPath == null) {
                         parentName = "";
@@ -474,32 +474,34 @@ class trans {
                         parentName = parentPath.toString();
                     }
                     Path destination = Paths.get(parentName, erlaLibsFileName);
-                    Path origin = Paths.get("./src/pcal/" + erlaLibsFileName);
+                    Path origin = Paths.get("./src/pcal/erla_libs/" + erlaLibsFileName);
                     if (!Files.exists(origin)) {
                         PcalDebug.reportWarning(erlaLibsFileName + " not found");
                     } else {
                         Files.copy(origin, destination, StandardCopyOption.REPLACE_EXISTING);
                         String outputDir = "";
-                        if (parentName != "") {
+                        if (!parentName.isEmpty()) {
                             outputDir = parentName + File.separator;
                         }
                         outputDir += erlaLibsFileName;
                         PcalDebug.reportInfo("New file " + outputDir + " written.");
                     }
                 } catch (Exception e) {
-                    PcalDebug.reportWarning("Error in "+ erlaLibsName + " generation");
+                    PcalDebug.reportWarning("Error in " + erlaLibsName + " generation");
                 }
-        }
+            }
 
-            String erlangFileName = PcalErlangGen.getErlangFileName(PcalParams.TLAInputFile);
+            String erlangFileName = PcalErlangGen.getErlangFileName();
+
+            String erlangCodeFileName = erlangFileName + ".erl";
             try {
-                WriteStringVectorToFile(erlangVec, erlangFileName);
+                WriteStringVectorToFile(erlangVec, erlangCodeFileName);
             } catch (StringVectorToFileException e) {
                 PcalDebug.reportError(e);
                 return exitWithStatus(STATUS_EXIT_WITH_ERRORS);
             }
 
-            PcalDebug.reportInfo("New file " + erlangFileName + " written.");
+            PcalDebug.reportInfo("New file " + erlangCodeFileName + " written.");
         }
 
         /*********************************************************************
@@ -1111,8 +1113,8 @@ class trans {
         }
 
         PcalDebug.reportInfo("PlusCal translation completed.");
-        
-        ArrayList<String> erlangOutput = null;
+
+        PcalErlangGenResult result = null;
         if (PcalParams.TranslateErlang) {
         	PcalDebug.reportInfo("Started Erlang translation.");
         	// get information from PCal translator
@@ -1124,24 +1126,21 @@ class trans {
             			);
             	return null;
             } else {
-            	PcalErlangGenerator pcalErlangGenerator = new PcalErlangGenerator(st, originalAST);
-            	Vector<String> translationErlang;
-            	try {
-            		translationErlang = pcalErlangGenerator.translate();
-            	} catch (PcalErlangGenException e) {
-            		PcalDebug.reportError(e);
-            		return null ;
-            	}
-            	if (translationErlang != null) {
-            		erlangOutput = new ArrayList<>(translationErlang);
-            	}
+                PcalErlangGenerator pcalErlangGenerator = new PcalErlangGenerator(st, originalAST);
+
+                try {
+                     result = pcalErlangGenerator.translate();
+                } catch (PcalErlangGenException e) {
+                    PcalDebug.reportError(e);
+                    return null;
+                }
             }
-        	PcalDebug.reportInfo("Erlang translation completed.");
+            PcalDebug.reportInfo("Erlang translation completed.");
         } else {
         	PcalDebug.reportInfo("Skipping Erlang translation.");
         }
         
-        return new TranslationResult(tlaOutput, erlangOutput);
+        return new TranslationResult(tlaOutput, result);
 // tla-pcal Debugging
 //System.exit(0);
 	}
@@ -1573,6 +1572,16 @@ class trans {
          *** -erlang : Specifies whether an Erlang program should be           *
          *             generated.                                              *
          *                                                                     *
+         *** -genMain : Specifies whether the translator should generate       *
+         *              a main function in the Erlang translation.             *
+         *              This flag is only useful in conjunction                *
+         *              with "-erlang" and is meant as a demonstration         *
+         *              of how to start the generated processes.               *
+         *              If control over the order of how the translated        *
+         *              processes are started is desired, then it is better    *
+         *              not to set this flag.                                  *
+         *                                                                     *
+         *                                                                     *
          *</pre>
          ********************************************************************* */
         boolean inFile = PcalParams.optionsInFile;
@@ -1770,8 +1779,12 @@ class trans {
             } else if (option.equals("-label") || (inFile && option.equals("label")))
             {
                 PcalParams.LabelFlag = true;
-            } else if (option.equals("-erlang")) {
+            } else if (option.equals("-erlang"))
+            {
            	 	PcalParams.TranslateErlang = true;
+            } else if (option.equals("-genMain"))
+            {
+                PcalParams.GenErlangMainFunction = true;
             } else if (notInFile && option.equals("-reportLabels"))
             {
                 PcalParams.ReportLabelsFlag = true;

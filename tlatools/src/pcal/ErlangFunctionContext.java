@@ -4,11 +4,11 @@ import pcal.exception.PcalErlangGenException;
 
 import java.util.*;
 
-public class FunctionContext extends ProcessContext {
+public class ErlangFunctionContext extends ErlangProcessContext {
 
     private Map<String,String> functionVars;
 
-    public FunctionContext(ProcessContext context, List<String> functionVars) {
+    public ErlangFunctionContext(ErlangProcessContext context, List<String> functionVars) {
         super(context, true);
         this.functionVars = new HashMap<>();
         for (String var :functionVars
