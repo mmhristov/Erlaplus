@@ -1,6 +1,4 @@
-![Erlaplus Logo](logo.png)
-# Erla+
-
+<h1 style="text-align: center;"> <img src="logo_transparent.png" alt="Erla+ logo" style="height: 3em;" /></h1>
 Erla+ is a tool that translates PlusCal specifications into Erlang implementations.
 An extension of PlusCal for actor-based modeling,
 which includes new primitives for message-passing
