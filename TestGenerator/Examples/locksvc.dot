@@ -1,0 +1,61 @@
+strict digraph DiskGraph {
+nodesep=0.35;
+subgraph cluster_graph {
+color="white";
+-8805165153484459999 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<<<>>>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> defaultInitValue)$/\\ response_message = (0 :> <<>>)$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"acquireLock\")$/\\ response = <<<<>>>>",style = filled]
+-8805165153484459999 -> 7958418399966305522 [label="acquireLock",color="black",fontcolor="black"];
+7958418399966305522 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<[type |-> \"lock\", from |-> 1]>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> defaultInitValue)$/\\ response_message = (0 :> <<>>)$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"criticalSection\")$/\\ response = <<<<>>>>"];
+-8805165153484459999 -> -7062291560306475773 [label="acquireLock",color="black",fontcolor="black"];
+-7062291560306475773 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> defaultInitValue)$/\\ response_message = (0 :> <<>>)$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"criticalSection\")$/\\ response = <<<<>>>>"];
+-8805165153484459999 -> -8805165153484459999 [style="dashed"];
+7958418399966305522 -> 6998364596789086977 [label="serverLoop",color="black",fontcolor="black"];
+6998364596789086977 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"respondLock\" @@ 1 :> \"criticalSection\")$/\\ response = <<<<>>>>"];
+7958418399966305522 -> 7958418399966305522 [style="dashed"];
+-7062291560306475773 -> -7062291560306475773 [style="dashed"];
+6998364596789086977 -> -4011507990341237836 [label="respondLock",color="black",fontcolor="black"];
+-4011507990341237836 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<\"grant\">>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"addToQ\" @@ 1 :> \"criticalSection\")$/\\ response = <<<<>>>>"];
+6998364596789086977 -> -6779757211467120826 [label="respondLock",color="black",fontcolor="black"];
+-6779757211467120826 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"addToQ\" @@ 1 :> \"criticalSection\")$/\\ response = <<<<>>>>"];
+6998364596789086977 -> 6998364596789086977 [style="dashed"];
+-4011507990341237836 -> -3723940207858350144 [label="addToQ",color="black",fontcolor="black"];
+-3723940207858350144 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<\"grant\">>)$/\\ q = (0 :> <<1>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"criticalSection\")$/\\ response = <<<<>>>>"];
+-4011507990341237836 -> -8266493094593160258 [label="criticalSection",color="black",fontcolor="black"];
+-8266493094593160258 [label="/\\ hasLock = <<TRUE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"addToQ\" @@ 1 :> \"unlock\")$/\\ response = <<\"grant\">>"];
+-4011507990341237836 -> -4011507990341237836 [style="dashed"];
+-6779757211467120826 -> 8135834718255667313 [label="addToQ",color="black",fontcolor="black"];
+8135834718255667313 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<1>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"criticalSection\")$/\\ response = <<<<>>>>"];
+-6779757211467120826 -> -6779757211467120826 [style="dashed"];
+-3723940207858350144 -> -5032384031992729486 [label="criticalSection",color="black",fontcolor="black"];
+-5032384031992729486 [label="/\\ hasLock = <<TRUE>>$/\\ request = <<[type |-> \"lock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<1>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"unlock\")$/\\ response = <<\"grant\">>"];
+-3723940207858350144 -> -3723940207858350144 [style="dashed"];
+-8266493094593160258 -> -5032384031992729486 [label="addToQ",color="black",fontcolor="black"];
+-8266493094593160258 -> -5052925588085414880 [label="unlock",color="black",fontcolor="black"];
+-5052925588085414880 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"unlock\", from |-> 1]>>$/\\ queues = (0 :> <<[type |-> \"unlock\", from |-> 1]>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"addToQ\" @@ 1 :> \"Done\")$/\\ response = <<\"grant\">>"];
+-8266493094593160258 -> 7885965569308342919 [label="unlock",color="black",fontcolor="black"];
+7885965569308342919 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"unlock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"addToQ\" @@ 1 :> \"Done\")$/\\ response = <<\"grant\">>"];
+-8266493094593160258 -> -8266493094593160258 [style="dashed"];
+8135834718255667313 -> 8135834718255667313 [style="dashed"];
+-5032384031992729486 -> -4759672843622453801 [label="unlock",color="black",fontcolor="black"];
+-4759672843622453801 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"unlock\", from |-> 1]>>$/\\ queues = (0 :> <<[type |-> \"unlock\", from |-> 1]>> @@ 1 :> <<>>)$/\\ q = (0 :> <<1>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"Done\")$/\\ response = <<\"grant\">>"];
+-5032384031992729486 -> 8967851722970828742 [label="unlock",color="black",fontcolor="black"];
+8967851722970828742 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"unlock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<1>>)$/\\ msg = (0 :> [type |-> \"lock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"Done\")$/\\ response = <<\"grant\">>"];
+-5032384031992729486 -> -5032384031992729486 [style="dashed"];
+-5052925588085414880 -> -4759672843622453801 [label="addToQ",color="black",fontcolor="black"];
+-5052925588085414880 -> -5052925588085414880 [style="dashed"];
+7885965569308342919 -> 8967851722970828742 [label="addToQ",color="black",fontcolor="black"];
+7885965569308342919 -> 7885965569308342919 [style="dashed"];
+-4759672843622453801 -> 6205110390207476424 [label="serverLoop",color="black",fontcolor="black"];
+6205110390207476424 [label="/\\ hasLock = <<FALSE>>$/\\ request = <<[type |-> \"unlock\", from |-> 1]>>$/\\ queues = (0 :> <<>> @@ 1 :> <<>>)$/\\ q = (0 :> <<>>)$/\\ msg = (0 :> [type |-> \"unlock\", from |-> 1])$/\\ response_message = (0 :> \"grant\")$/\\ pc = (0 :> \"serverLoop\" @@ 1 :> \"Done\")$/\\ response = <<\"grant\">>"];
+-4759672843622453801 -> -4759672843622453801 [style="dashed"];
+8967851722970828742 -> 8967851722970828742 [style="dashed"];
+6205110390207476424 -> 6205110390207476424 [style="dashed"];
+{rank = same; -8805165153484459999;}
+{rank = same; 7958418399966305522;-7062291560306475773;}
+{rank = same; 6998364596789086977;}
+{rank = same; -6779757211467120826;-4011507990341237836;}
+{rank = same; 8135834718255667313;-3723940207858350144;-8266493094593160258;}
+{rank = same; -5032384031992729486;7885965569308342919;-5052925588085414880;}
+{rank = same; -4759672843622453801;8967851722970828742;}
+{rank = same; 6205110390207476424;}
+}
+}
