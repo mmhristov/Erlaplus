@@ -1,4 +1,4 @@
-# Semaphore Protocol
+# RaftKVS
 This is a Raft-based key value store, extending upon our [Raft model](../Raft).
 This directory includes the specification, a configuration file for the TLC model-checker, and the generated Erlang translation.
 
